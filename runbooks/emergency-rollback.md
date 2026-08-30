@@ -16,18 +16,20 @@ protected environment.
    artifact digests plus their source and evidence digests.
 2. Run the rollback-verification workflow on `main`. Its connected-governance
    preflight must pass and its protected environment must approve execution.
-3. Review the emitted receipt checksum. Commit the previous digest and receipt
-   reference through the normal Git review path.
-4. Reconcile without broad prune. Observe health, correctness, safety, latency,
-   and dependent queues before declaring recovery.
+3. Confirm that source validation reaches the fail-closed JIT-09 gate, then
+   stop. The current workflow does not change desired state, reconcile Argo CD,
+   emit a rollback receipt, or prove recovery.
 
 ## Failure path
 
-If prior evidence is invalid, the environment is inactive, or connected
-governance is unavailable, stop. Use the independently authorized cluster
-recovery path to suspend service safely, then reconstruct every action in Git.
+If prior evidence is invalid, the environment is inactive, connected governance
+is unavailable, or the workflow stops at JIT-09 as designed, record the attempt
+as blocked. Use the independently authorized cluster recovery path to suspend
+service safely, then reconstruct every action in Git.
 
 ## Exit evidence
 
-Capture incident ID, current and previous digests, source revision, attestation
-digest, protected approval record, Git commit, sync result, and SLO verification.
+Before JIT-09 is implemented and qualified, capture the incident ID, current and
+previous digests, source revision, attestation digest, and protected approval
+record only as incident working records. They are not a rollback receipt, sync
+result, SLO verification, or recovery evidence.

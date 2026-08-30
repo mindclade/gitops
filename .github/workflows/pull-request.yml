@@ -1,4 +1,4 @@
-name: Pull request validation
+name: Pull request
 
 on:
   pull_request:
@@ -28,13 +28,13 @@ env:
   KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
 
 jobs:
-  source:
-    name: Source, policy, and provenance
+  required:
+    name: required
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out reviewed source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install pinned Go

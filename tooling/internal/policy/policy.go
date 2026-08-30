@@ -2,7 +2,13 @@ package policy
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,13 +59,64 @@ const connectedEvidenceVerifierGate = "blocked-pending-jit-09"
 // Keep those gates separate from JIT-09 so evidence qualification cannot
 // accidentally activate an inert deployment module.
 const (
-	platformDeploymentGate          = "blocked-pending-jit-05"
-	policyBindingReconcilerGate     = "blocked-pending-jit-05"
-	secretReferenceMaterializerGate = "blocked-pending-jit-05"
-	reviewedArgoVersion             = "v3.5.2"
-	reviewedArgoRevision            = "e258ee23c3e52266d407572f4bcdfe7d9ed36cb5"
-	reviewedArgoSHA256              = "9a87f2b3e14c278f12501eb0ef5c3955b27cf05370ca425381c6a908cf85a5c5"
+	platformDeploymentGate                   = "blocked-pending-jit-05"
+	policyBindingReconcilerGate              = "blocked-pending-jit-05"
+	secretReferenceMaterializerGate          = "blocked-pending-jit-05"
+	reviewedInfrastructureExportSchemaDigest = "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
+	reviewedArgoVersion                      = "v3.5.2"
+	reviewedArgoRevision                     = "e258ee23c3e52266d407572f4bcdfe7d9ed36cb5"
+	reviewedArgoSHA256                       = "9a87f2b3e14c278f12501eb0ef5c3955b27cf05370ca425381c6a908cf85a5c5"
 )
+
+var (
+	infrastructureExportKeyVersionPattern = regexp.MustCompile(
+		`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]{5,})/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/[1-9][0-9]*$`,
+	)
+	infrastructureExportLineagePattern = regexp.MustCompile(
+		`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+	)
+	infrastructureExportProvenancePattern = regexp.MustCompile(
+		`^https://github\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$`,
+	)
+	infrastructureExportProjectIDPattern      = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	infrastructureExportBucketPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
+	infrastructureExportServiceAccountPattern = regexp.MustCompile(
+		`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`,
+	)
+)
+
+var infrastructureExportKindsByStack = map[string]map[string]bool{
+	"foundation":    {"project": true},
+	"network":       {"network": true, "subnetwork": true, "private-dns-zone": true},
+	"artifacts":     {"artifact-registry": true, "artifact-bucket": true, "kms-key-reference": true},
+	"data-services": {"database-instance": true, "topic": true, "kms-key-reference": true},
+	"clusters":      {"gke-cluster": true, "cluster-membership": true, "workload-identity-pool": true, "argocd-prerequisite": true},
+	"ci-execution":  {"build-execution-pool": true},
+	"observability": {"log-bucket": true, "metrics-scope": true},
+}
+
+var infrastructureExportProviderPathPatterns = map[string]*regexp.Regexp{
+	"network":              regexp.MustCompile(`^projects/[^/]+/global/networks/[^/]+$`),
+	"subnetwork":           regexp.MustCompile(`^projects/[^/]+/regions/[^/]+/subnetworks/[^/]+$`),
+	"private-dns-zone":     regexp.MustCompile(`^projects/[^/]+/managedZones/[^/]+$`),
+	"artifact-registry":    regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/repositories/[^/]+$`),
+	"database-instance":    regexp.MustCompile(`^projects/[^/]+/instances/[^/]+$`),
+	"topic":                regexp.MustCompile(`^projects/[^/]+/topics/[^/]+$`),
+	"kms-key-reference":    regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+$`),
+	"gke-cluster":          regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/clusters/[^/]+$`),
+	"cluster-membership":   regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/memberships/[^/]+$`),
+	"build-execution-pool": regexp.MustCompile(`^projects/[^/]+/regions/[^/]+/instanceGroupManagers/[^/]+$`),
+	"log-bucket":           regexp.MustCompile(`^projects/[^/]+/locations/[^/]+/buckets/[^/]+$`),
+}
+
+var infrastructureExportProviderHosts = map[string]string{
+	"network": "compute.googleapis.com", "subnetwork": "compute.googleapis.com",
+	"private-dns-zone": "dns.googleapis.com", "artifact-registry": "artifactregistry.googleapis.com",
+	"database-instance": "sqladmin.googleapis.com", "topic": "pubsub.googleapis.com",
+	"kms-key-reference": "cloudkms.googleapis.com", "gke-cluster": "container.googleapis.com",
+	"cluster-membership": "gkehub.googleapis.com", "build-execution-pool": "compute.googleapis.com",
+	"log-bucket": "logging.googleapis.com",
+}
 
 var bootstrapProvenanceKeys = []string{
 	"upstream-version",
@@ -751,8 +808,17 @@ func validateSchemaDocument(root, documentPath, schemaPath string) (map[string]a
 		return nil, err
 	}
 	var document map[string]any
-	if err := json.Unmarshal(content, &document); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	if err := decoder.Decode(&document); err != nil {
 		return nil, fmt.Errorf("%s must be JSON-compatible YAML: %w", documentPath, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("%s must contain exactly one JSON document", documentPath)
+		}
+		return nil, fmt.Errorf("%s has invalid trailing JSON: %w", documentPath, err)
 	}
 	schema, err := compileSchema(root, schemaPath)
 	if err != nil {
@@ -762,6 +828,18 @@ func validateSchemaDocument(root, documentPath, schemaPath string) (map[string]a
 		return nil, fmt.Errorf("validate %s: %w", documentPath, err)
 	}
 	return document, nil
+}
+
+func exactUnsignedJSONInteger(value any) (uint64, error) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("must be a JSON integer")
+	}
+	parsed, err := strconv.ParseUint(number.String(), 10, 64)
+	if err != nil || strconv.FormatUint(parsed, 10) != number.String() {
+		return 0, fmt.Errorf("must be a canonical unsigned JSON integer")
+	}
+	return parsed, nil
 }
 
 func objectArray(document map[string]any, field, source string) ([]map[string]any, error) {
@@ -955,8 +1033,8 @@ func validateReleaseSet(document map[string]any, environment string, clusters ma
 		}
 		if environment == "production" || environment == "restricted" {
 			if rollout, exists := record["rollout"].(map[string]any); exists {
-				initialPercent, ok := rollout["initialPercent"].(float64)
-				if !ok || initialPercent > 10 {
+				initialPercent, err := exactUnsignedJSONInteger(rollout["initialPercent"])
+				if err != nil || initialPercent > 10 {
 					return fmt.Errorf("%s release %s protected canary may not begin above 10 percent", source, identity)
 				}
 				if automatic, ok := rollout["automaticPromotion"].(bool); !ok || automatic {
@@ -1120,6 +1198,44 @@ func VerifyTransition(root, action, environment, releaseClass, component, cluste
 	return fmt.Errorf("checked-out %s record %s/%s was not found", releaseClass, cluster, component)
 }
 
+type infrastructureExportMetadata struct {
+	Environment        string `json:"environment"`
+	Stack              string `json:"stack"`
+	SourceRepository   string `json:"sourceRepository"`
+	SourceCommit       string `json:"sourceCommit"`
+	Root               string `json:"root"`
+	PlanDigest         string `json:"planDigest"`
+	ProviderLockDigest string `json:"providerLockDigest"`
+	BackendStateDigest string `json:"backendStateDigest"`
+	BackendLineage     string `json:"backendLineage"`
+	BackendSerial      uint64 `json:"backendSerial"`
+	SchemaDigest       string `json:"schemaDigest"`
+	GeneratedAt        string `json:"generatedAt"`
+}
+
+type infrastructureExportResource struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	URI  string `json:"uri"`
+}
+
+type infrastructureExportReference struct {
+	URI    string `json:"uri"`
+	Digest string `json:"digest"`
+}
+
+type infrastructureExportSignedSpec struct {
+	Resources  []infrastructureExportResource `json:"resources"`
+	Provenance infrastructureExportReference  `json:"provenance"`
+}
+
+type infrastructureExportSignedPayload struct {
+	APIVersion string                         `json:"apiVersion"`
+	Kind       string                         `json:"kind"`
+	Metadata   infrastructureExportMetadata   `json:"metadata"`
+	Spec       infrastructureExportSignedSpec `json:"spec"`
+}
+
 func validateInfrastructureExports(document map[string]any, environment string) (map[string]bool, error) {
 	exports, err := objectArray(document, "exports", "infrastructure-exports.yaml")
 	if err != nil {
@@ -1141,16 +1257,30 @@ func validateInfrastructureExports(document map[string]any, environment string) 
 			return nil, fmt.Errorf("duplicate infrastructure export stack %s", stack)
 		}
 		stacks[stack] = true
+		if fmt.Sprint(metadata["sourceRepository"]) != "mindclade/infrastructure-live" {
+			return nil, fmt.Errorf("infrastructure export stack %s source repository is not authoritative", stack)
+		}
 		if fmt.Sprint(metadata["root"]) != "opentofu/live/"+environment+"/"+stack {
 			return nil, fmt.Errorf("infrastructure export stack %s root does not match environment and stack", stack)
 		}
 		if err := release.ValidateRevision(fmt.Sprint(metadata["sourceCommit"])); err != nil {
 			return nil, fmt.Errorf("infrastructure export stack %s source commit: %w", stack, err)
 		}
-		for _, field := range []string{"planDigest", "schemaDigest"} {
+		for _, field := range []string{"planDigest", "providerLockDigest", "backendStateDigest"} {
 			if err := release.ValidateDigest(fmt.Sprint(metadata[field])); err != nil {
 				return nil, fmt.Errorf("infrastructure export stack %s %s: %w", stack, field, err)
 			}
+		}
+		if fmt.Sprint(metadata["schemaDigest"]) != reviewedInfrastructureExportSchemaDigest {
+			return nil, fmt.Errorf("infrastructure export stack %s schemaDigest does not match the reviewed producer schema", stack)
+		}
+		backendLineage := fmt.Sprint(metadata["backendLineage"])
+		if !infrastructureExportLineagePattern.MatchString(backendLineage) {
+			return nil, fmt.Errorf("infrastructure export stack %s backendLineage must be a canonical UUID", stack)
+		}
+		backendSerial, err := exactUnsignedJSONInteger(metadata["backendSerial"])
+		if err != nil {
+			return nil, fmt.Errorf("infrastructure export stack %s backendSerial must be an unsigned integer", stack)
 		}
 		generatedAt := fmt.Sprint(metadata["generatedAt"])
 		parsed, err := time.Parse(time.RFC3339, generatedAt)
@@ -1165,50 +1295,187 @@ func validateInfrastructureExports(document map[string]any, environment string) 
 		if err != nil {
 			return nil, err
 		}
+		canonicalResources := make([]infrastructureExportResource, 0, len(items))
 		for _, resource := range items {
 			kind := fmt.Sprint(resource["kind"])
 			name := fmt.Sprint(resource["name"])
+			uri := fmt.Sprint(resource["uri"])
 			identity := kind + "/" + name
+			if !infrastructureExportKindsByStack[stack][kind] {
+				return nil, fmt.Errorf("infrastructure resource kind %s is not allowed for stack %s", kind, stack)
+			}
 			if resources[identity] {
 				return nil, fmt.Errorf("duplicate infrastructure resource %s", identity)
 			}
 			resources[identity] = true
-			if !safeReferenceURI(fmt.Sprint(resource["uri"]), true) {
-				return nil, fmt.Errorf("infrastructure resource %s has an unsafe URI", identity)
+			if !safeReferenceURI(uri, true) || !validInfrastructureExportResourceURI(kind, uri) {
+				return nil, fmt.Errorf("infrastructure resource %s has an unsafe or non-canonical URI", identity)
 			}
+			canonicalResources = append(canonicalResources, infrastructureExportResource{Kind: kind, Name: name, URI: uri})
 			if kind == "cluster-membership" {
 				memberships[name] = true
 			}
+		}
+		if !infrastructureExportResourcesSorted(canonicalResources) {
+			return nil, fmt.Errorf("infrastructure export stack %s resources are not in canonical producer order", stack)
 		}
 		evidence, ok := spec["evidence"].(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("infrastructure export stack %s evidence must be an object", stack)
 		}
-		for _, name := range []string{"signature", "provenance"} {
-			reference, ok := evidence[name].(map[string]any)
-			if !ok || !safeReferenceURI(fmt.Sprint(reference["uri"]), false) {
-				return nil, fmt.Errorf("infrastructure export stack %s has unsafe %s evidence URI", stack, name)
-			}
-			if err := release.ValidateDigest(fmt.Sprint(reference["digest"])); err != nil {
-				return nil, fmt.Errorf("infrastructure export stack %s %s evidence: %w", stack, name, err)
-			}
+		provenanceValue, ok := evidence["provenance"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("infrastructure export stack %s provenance evidence must be an object", stack)
+		}
+		provenance := infrastructureExportReference{
+			URI:    fmt.Sprint(provenanceValue["uri"]),
+			Digest: fmt.Sprint(provenanceValue["digest"]),
+		}
+		if !safeReferenceURI(provenance.URI, false) || !infrastructureExportProvenancePattern.MatchString(provenance.URI) {
+			return nil, fmt.Errorf("infrastructure export stack %s has unsafe or non-canonical provenance evidence URI", stack)
+		}
+		if err := release.ValidateDigest(provenance.Digest); err != nil {
+			return nil, fmt.Errorf("infrastructure export stack %s provenance evidence: %w", stack, err)
+		}
+		signature, ok := evidence["signature"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("infrastructure export stack %s signature evidence must be an object", stack)
+		}
+		payload := infrastructureExportSignedPayload{
+			APIVersion: fmt.Sprint(export["apiVersion"]),
+			Kind:       fmt.Sprint(export["kind"]),
+			Metadata: infrastructureExportMetadata{
+				Environment:        environment,
+				Stack:              stack,
+				SourceRepository:   fmt.Sprint(metadata["sourceRepository"]),
+				SourceCommit:       fmt.Sprint(metadata["sourceCommit"]),
+				Root:               fmt.Sprint(metadata["root"]),
+				PlanDigest:         fmt.Sprint(metadata["planDigest"]),
+				ProviderLockDigest: fmt.Sprint(metadata["providerLockDigest"]),
+				BackendStateDigest: fmt.Sprint(metadata["backendStateDigest"]),
+				BackendLineage:     backendLineage,
+				BackendSerial:      backendSerial,
+				SchemaDigest:       fmt.Sprint(metadata["schemaDigest"]),
+				GeneratedAt:        generatedAt,
+			},
+			Spec: infrastructureExportSignedSpec{Resources: canonicalResources, Provenance: provenance},
+		}
+		encodedPayload, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("infrastructure export stack %s canonical payload: %w", stack, err)
+		}
+		if err := verifyInfrastructureExportSignature(signature, encodedPayload); err != nil {
+			return nil, fmt.Errorf("infrastructure export stack %s: %w", stack, err)
 		}
 	}
 	return memberships, nil
 }
 
+func infrastructureExportResourcesSorted(resources []infrastructureExportResource) bool {
+	for index := 1; index < len(resources); index++ {
+		left, right := resources[index-1], resources[index]
+		if left.Kind > right.Kind ||
+			(left.Kind == right.Kind && left.Name > right.Name) ||
+			(left.Kind == right.Kind && left.Name == right.Name && left.URI > right.URI) {
+			return false
+		}
+	}
+	return true
+}
+
+func verifyInfrastructureExportSignature(signature map[string]any, payload []byte) error {
+	if fmt.Sprint(signature["algorithm"]) != "EC_SIGN_P256_SHA256" {
+		return fmt.Errorf("signature algorithm must be EC_SIGN_P256_SHA256")
+	}
+	if !infrastructureExportKeyVersionPattern.MatchString(fmt.Sprint(signature["keyVersion"])) {
+		return fmt.Errorf("signature keyVersion must be the exact bootstrap infrastructure-export key version")
+	}
+	publicKeyDER, err := decodeCanonicalInfrastructureExportBase64(fmt.Sprint(signature["publicKey"]), 64, 512, "signature public key")
+	if err != nil {
+		return err
+	}
+	parsedKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	if err != nil {
+		return fmt.Errorf("signature public key must be canonical PKIX SubjectPublicKeyInfo: %w", err)
+	}
+	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
+	if !ok || publicKey.Curve != elliptic.P256() {
+		return fmt.Errorf("signature public key must be ECDSA P-256")
+	}
+	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil || subtle.ConstantTimeCompare(canonicalDER, publicKeyDER) != 1 {
+		return fmt.Errorf("signature public key must use canonical PKIX SubjectPublicKeyInfo DER")
+	}
+	signatureValue, err := decodeCanonicalInfrastructureExportBase64(fmt.Sprint(signature["value"]), 8, 256, "signature value")
+	if err != nil {
+		return err
+	}
+	keyDigest := sha256.Sum256(publicKeyDER)
+	expectedPublicKeyDigest := "sha256:" + hex.EncodeToString(keyDigest[:])
+	if subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["publicKeyDigest"])), []byte(expectedPublicKeyDigest)) != 1 {
+		return fmt.Errorf("signature publicKeyDigest does not match the embedded public key")
+	}
+	payloadHash := sha256.Sum256(payload)
+	expectedPayloadDigest := "sha256:" + hex.EncodeToString(payloadHash[:])
+	if subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["payloadDigest"])), []byte(expectedPayloadDigest)) != 1 {
+		return fmt.Errorf("signature payloadDigest does not match the canonical export payload")
+	}
+	if !ecdsa.VerifyASN1(publicKey, payloadHash[:], signatureValue) {
+		return fmt.Errorf("GCP KMS ECDSA P-256 signature verification failed")
+	}
+	return nil
+}
+
+func decodeCanonicalInfrastructureExportBase64(value string, minimumLength, maximumLength int, name string) ([]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(decoded) < minimumLength || len(decoded) > maximumLength || base64.StdEncoding.EncodeToString(decoded) != value {
+		return nil, fmt.Errorf("%s must be canonical base64 encoding of %d to %d bytes", name, minimumLength, maximumLength)
+	}
+	return decoded, nil
+}
+
+func validInfrastructureExportResourceURI(kind, raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "" || !strings.HasPrefix(raw, "//") {
+		return false
+	}
+	path := strings.TrimPrefix(parsed.EscapedPath(), "/")
+	if pattern := infrastructureExportProviderPathPatterns[kind]; pattern != nil {
+		return parsed.Hostname() == infrastructureExportProviderHosts[kind] && pattern.MatchString(path)
+	}
+	switch kind {
+	case "project":
+		return parsed.Hostname() == "cloudresourcemanager.googleapis.com" &&
+			strings.HasPrefix(path, "projects/") && infrastructureExportProjectIDPattern.MatchString(strings.TrimPrefix(path, "projects/"))
+	case "artifact-bucket":
+		return parsed.Hostname() == "storage.googleapis.com" && infrastructureExportBucketPattern.MatchString(path)
+	case "workload-identity-pool":
+		value := strings.TrimPrefix(path, "workloadIdentityPools/")
+		project := strings.TrimSuffix(value, ".svc.id.goog")
+		return parsed.Hostname() == "container.googleapis.com" && value != path && project != value && infrastructureExportProjectIDPattern.MatchString(project)
+	case "argocd-prerequisite":
+		identity := strings.TrimPrefix(path, "projects/-/serviceAccounts/")
+		return parsed.Hostname() == "iam.googleapis.com" && identity != path && infrastructureExportServiceAccountPattern.MatchString(identity)
+	case "metrics-scope":
+		project := strings.TrimPrefix(path, "locations/global/metricsScopes/")
+		return parsed.Hostname() == "monitoring.googleapis.com" && project != path && infrastructureExportProjectIDPattern.MatchString(project)
+	default:
+		return false
+	}
+}
+
 func safeReferenceURI(raw string, allowSchemeRelative bool) bool {
-	if raw == "" || len(raw) > 2048 || strings.TrimSpace(raw) != raw || strings.ContainsAny(raw, " \r\n\t") {
+	if len(raw) > 2048 || strings.TrimSpace(raw) != raw || strings.ContainsAny(raw, " \r\n\t?#") {
 		return false
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+	if err != nil || parsed.Opaque != "" || parsed.Host == "" || parsed.Hostname() == "" || parsed.Path == "" || parsed.Path == "/" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return false
 	}
-	if strings.HasPrefix(raw, "//") {
-		return allowSchemeRelative && parsed.Scheme == "" && parsed.Host != "" && parsed.Path != "" && parsed.Path != "/"
+	if parsed.Scheme == "https" {
+		return true
 	}
-	return parsed.Scheme == "https" && parsed.Host != "" && parsed.Path != "" && parsed.Path != "/"
+	return allowSchemeRelative && parsed.Scheme == "" && strings.HasPrefix(raw, "//")
 }
 
 func readYAMLObjects(path, source string) ([]map[string]any, error) {
@@ -1248,6 +1515,152 @@ func readSingleYAMLObject(path, source string) (map[string]any, error) {
 	return documents[0], nil
 }
 
+func decodeEmbeddedYAML(value any, source string, target any) error {
+	raw, ok := value.(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("%s must be a non-empty YAML string", source)
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(raw))
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("parse %s: %w", source, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", source, err)
+		}
+		return fmt.Errorf("parse %s: multiple YAML documents are forbidden", source)
+	}
+	return nil
+}
+
+func validateDormantArgoCredentialContract(document map[string]any) error {
+	const source = "Argo CD credential binding contract"
+	if err := requireExactObjectKeys(document, source, "apiVersion", "kind", "metadata", "data"); err != nil {
+		return err
+	}
+	if document["apiVersion"] != "v1" || document["kind"] != "ConfigMap" {
+		return fmt.Errorf("%s identity must remain canonical", source)
+	}
+	metadata, ok := document["metadata"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s metadata must be an object", source)
+	}
+	if err := requireExactObjectKeys(metadata, source+" metadata", "name", "namespace", "labels"); err != nil {
+		return err
+	}
+	if metadata["name"] != "argocd-credential-binding-contract" || metadata["namespace"] != "argocd" {
+		return fmt.Errorf("%s metadata identity must remain canonical", source)
+	}
+	if err := requireExactStringMap(metadata["labels"], source+" metadata.labels", map[string]string{
+		"app.kubernetes.io/part-of":      "argocd",
+		"gitops.mindclade.io/activation": "inactive",
+	}); err != nil {
+		return err
+	}
+
+	data, ok := document["data"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s data must be an object", source)
+	}
+	if err := requireExactObjectKeys(data, source+" data", "status", "provider", "activation-gate", "required-targets", "sso-contract", "activation-requirements"); err != nil {
+		return err
+	}
+	if data["status"] != "inactive" || data["provider"] != "ExternalSecret" || data["activation-gate"] != "blocked-pending-jit-05" {
+		return fmt.Errorf("%s must remain inactive behind JIT-05 and use ExternalSecret", source)
+	}
+
+	var targets map[string]any
+	if err := decodeEmbeddedYAML(data["required-targets"], source+" required-targets", &targets); err != nil {
+		return err
+	}
+	if err := requireExactObjectKeys(targets, source+" required-targets", "repositoryCredentials", "argocdRuntime", "argocdSSO"); err != nil {
+		return err
+	}
+	repositoryCredentials, ok := targets["repositoryCredentials"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s required-targets.repositoryCredentials must be an object", source)
+	}
+	if err := requireExactObjectKeys(repositoryCredentials, source+" required-targets.repositoryCredentials", "secretType", "fields"); err != nil {
+		return err
+	}
+	if repositoryCredentials["secretType"] != "repo-creds" {
+		return fmt.Errorf("%s required-targets.repositoryCredentials.secretType must equal %q", source, "repo-creds")
+	}
+	if err := requireExactStringArray(repositoryCredentials["fields"], source+" required-targets.repositoryCredentials.fields", "url", "githubAppID", "githubAppInstallationID", "githubAppPrivateKey"); err != nil {
+		return err
+	}
+	argocdRuntime, ok := targets["argocdRuntime"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s required-targets.argocdRuntime must be an object", source)
+	}
+	if err := requireExactObjectKeys(argocdRuntime, source+" required-targets.argocdRuntime", "targetSecret", "fields"); err != nil {
+		return err
+	}
+	if argocdRuntime["targetSecret"] != "argocd-secret" {
+		return fmt.Errorf("%s required-targets.argocdRuntime.targetSecret must equal %q", source, "argocd-secret")
+	}
+	if err := requireExactStringArray(argocdRuntime["fields"], source+" required-targets.argocdRuntime.fields", "dex.github.clientID", "dex.github.clientSecret"); err != nil {
+		return err
+	}
+	argocdSSO, ok := targets["argocdSSO"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s required-targets.argocdSSO must be an object", source)
+	}
+	if err := requireExactObjectKeys(argocdSSO, source+" required-targets.argocdSSO", "targetConfigMap", "fields"); err != nil {
+		return err
+	}
+	if argocdSSO["targetConfigMap"] != "argocd-cm" {
+		return fmt.Errorf("%s required-targets.argocdSSO.targetConfigMap must equal %q", source, "argocd-cm")
+	}
+	if err := requireExactStringArray(argocdSSO["fields"], source+" required-targets.argocdSSO.fields", "url", "dex.config"); err != nil {
+		return err
+	}
+
+	var sso map[string]any
+	if err := decodeEmbeddedYAML(data["sso-contract"], source+" sso-contract", &sso); err != nil {
+		return err
+	}
+	if err := requireExactObjectKeys(sso, source+" sso-contract", "provider", "org", "teamNameField", "teams", "callbackPath"); err != nil {
+		return err
+	}
+	if sso["provider"] != "github" || sso["org"] != "mindclade" || sso["teamNameField"] != "slug" || sso["callbackPath"] != "/api/dex/callback" {
+		return fmt.Errorf("%s sso-contract identity must remain canonical", source)
+	}
+	contractTeams := []string{"platform-operations", "release-engineering", "security"}
+	if err := requireExactStringArray(sso["teams"], source+" sso-contract.teams", contractTeams...); err != nil {
+		return err
+	}
+	rbacTeams := make([]string, 0, len(contractTeams))
+	for _, line := range argoRBACPolicyLines {
+		const prefix = "g, mindclade:"
+		if strings.HasPrefix(line, prefix) {
+			rbacTeams = append(rbacTeams, strings.SplitN(strings.TrimPrefix(line, prefix), ",", 2)[0])
+		}
+	}
+	sortedContractTeams := append([]string(nil), contractTeams...)
+	sort.Strings(sortedContractTeams)
+	sort.Strings(rbacTeams)
+	if strings.Join(sortedContractTeams, "\x00") != strings.Join(rbacTeams, "\x00") {
+		return fmt.Errorf("%s sso-contract teams must exactly match the reviewed RBAC groups", source)
+	}
+
+	var requirements []any
+	if err := decodeEmbeddedYAML(data["activation-requirements"], source+" activation-requirements", &requirements); err != nil {
+		return err
+	}
+	return requireExactStringArray(requirements, source+" activation-requirements",
+		"External Secrets Operator is installed and qualified.",
+		"A reviewed SecretStore or ClusterSecretStore binding exists.",
+		"Remote reference identifiers are approved for this environment.",
+		"JIT-05 ratifies the Argo CD SSO identity, public URL, callback, and secret-binding boundary.",
+		"The reviewed HTTPS Argo CD URL resolves and its callback appends /api/dex/callback exactly.",
+		"argocd-cm data.url and data.dex.config plus the argocd-secret Dex credential fields are activated atomically in one reviewed change.",
+		"Until every requirement passes, argocd-cm omits data.url and data.dex.config and this contract remains inactive.",
+		"No secret value is committed to Git.",
+	)
+}
+
 func validateArgoCoreConfig(document map[string]any, rendered bool) error {
 	metadata, ok := document["metadata"].(map[string]any)
 	if document["apiVersion"] != "v1" || document["kind"] != "ConfigMap" || !ok || metadata["name"] != "argocd-cm" {
@@ -1258,25 +1671,12 @@ func validateArgoCoreConfig(document map[string]any, rendered bool) error {
 		return fmt.Errorf("Argo CD core ConfigMap data must be an object")
 	}
 	expected := map[string]string{
-		"admin.enabled":                      "false",
-		"users.anonymous.enabled":            "false",
-		"exec.enabled":                       "false",
-		"statusbadge.enabled":                "false",
-		"application.resourceTrackingMethod": "annotation+label",
-		"resource.respectRBAC":               "strict",
-		"dex.config": "connectors:\n" +
-			"  - type: github\n" +
-			"    id: github\n" +
-			"    name: Mindclade GitHub\n" +
-			"    config:\n" +
-			"      clientID: $dex.github.clientID\n" +
-			"      clientSecret: $dex.github.clientSecret\n" +
-			"      orgs:\n" +
-			"        - name: mindclade\n" +
-			"          teams:\n" +
-			"            - platform\n" +
-			"            - release\n" +
-			"            - security\n",
+		"admin.enabled":                                 "false",
+		"users.anonymous.enabled":                       "false",
+		"exec.enabled":                                  "false",
+		"statusbadge.enabled":                           "false",
+		"application.resourceTrackingMethod":            "annotation+label",
+		"resource.respectRBAC":                          "strict",
 		"resource.customizations.ignoreDifferences.all": "jqPathExpressions:\n  - .metadata.managedFields\n",
 	}
 	if !rendered {
@@ -2077,12 +2477,14 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	credentialText := string(credentials)
-	for _, invariant := range []string{"kind: ConfigMap", "status: inactive", "provider: ExternalSecret"} {
-		if !strings.Contains(credentialText, invariant) {
-			return fmt.Errorf("inactive credential binding lacks %q", invariant)
-		}
+	credentialContract, err := readSingleYAMLObject(filepath.Join(root, "controllers", "argocd", "repository-credentials-reference.yaml"), "controllers/argocd/repository-credentials-reference.yaml")
+	if err != nil {
+		return err
 	}
+	if err := validateDormantArgoCredentialContract(credentialContract); err != nil {
+		return err
+	}
+	credentialText := string(credentials)
 	for _, forbidden := range []string{"kind: ExternalSecret", "secretStoreRef:", "remoteRef:"} {
 		if strings.Contains(credentialText, forbidden) {
 			return fmt.Errorf("inactive credential binding contains premature binding %q", forbidden)

@@ -1,4 +1,6 @@
+import base64
 import copy
+import hashlib
 import json
 import os
 import re
@@ -6,10 +8,68 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+INFRASTRUCTURE_EXPORT_PRODUCER_COMMIT = "e80be3f354e61c518ae347bf393f35fb368fc158"
+INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST = "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
+
+
+@lru_cache(maxsize=None)
+def _p256_sign(message):
+    # Deterministic test-only P-256 arithmetic, matching the producer fixture.
+    field = int("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 16)
+    order = int("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16)
+    base = (
+        int("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", 16),
+        int("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 16),
+    )
+
+    def add(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        x1, y1 = left
+        x2, y2 = right
+        if x1 == x2 and (y1 + y2) % field == 0:
+            return None
+        if left == right:
+            slope = (3 * x1 * x1 - 3) * pow(2 * y1, field - 2, field) % field
+        else:
+            slope = (y2 - y1) * pow(x2 - x1, field - 2, field) % field
+        x3 = (slope * slope - x1 - x2) % field
+        return x3, (slope * (x1 - x3) - y1) % field
+
+    def multiply(point, scalar):
+        result = None
+        addend = point
+        while scalar:
+            if scalar & 1:
+                result = add(result, addend)
+            addend = add(addend, addend)
+            scalar >>= 1
+        return result
+
+    def integer(value):
+        encoded = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        if encoded[0] & 0x80:
+            encoded = b"\x00" + encoded
+        return b"\x02" + bytes([len(encoded)]) + encoded
+
+    scalar = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-key").digest(), "big") % (order - 1) + 1
+    public_x, public_y = multiply(base, scalar)
+    uncompressed = b"\x04" + public_x.to_bytes(32, "big") + public_y.to_bytes(32, "big")
+    public_key = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    digest = hashlib.sha256(message).digest()
+    nonce = int.from_bytes(hashlib.sha256(b"mindclade-test-p256-nonce" + digest).digest(), "big") % (order - 1) + 1
+    nonce_x, _ = multiply(base, nonce)
+    r = nonce_x % order
+    s = (pow(nonce, -1, order) * (int.from_bytes(digest, "big") + r * scalar)) % order
+    encoded = integer(r) + integer(s)
+    return public_key, b"\x30" + bytes([len(encoded)]) + encoded
 
 
 class SchemaCompatibilityTest(unittest.TestCase):
@@ -100,9 +160,72 @@ class SchemaCompatibilityTest(unittest.TestCase):
         self.assertIn('"promotionReceiptDigest"', signed_policy)
         self.assertIn('"governanceEvidenceDigest"', signed_policy)
 
+    def test_infrastructure_export_schema_matches_reviewed_producer_contract(self):
+        schema = json.loads((ROOT / "schemas/v1/infrastructure_exports.schema.json").read_text())
+        self.assertIn(INFRASTRUCTURE_EXPORT_PRODUCER_COMMIT, schema["$comment"])
+        export = schema["$defs"]["infrastructureExport"]
+        metadata = export["properties"]["metadata"]
+        self.assertFalse(metadata["additionalProperties"])
+        self.assertTrue({
+            "providerLockDigest", "backendStateDigest", "backendLineage", "backendSerial",
+        } <= set(metadata["required"]))
+        self.assertEqual(metadata["properties"]["schemaDigest"]["const"], INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST)
+        self.assertIn("pattern", metadata["properties"]["sourceCommit"])
+        self.assertNotIn("const", metadata["properties"]["sourceCommit"])
+        resources = export["properties"]["spec"]["properties"]["resources"]
+        self.assertIn("gke-cluster", resources["items"]["properties"]["kind"]["enum"])
+        evidence = export["properties"]["spec"]["properties"]["evidence"]
+        signature = evidence["properties"]["signature"]
+        self.assertEqual(signature["properties"]["algorithm"]["const"], "EC_SIGN_P256_SHA256")
+        self.assertEqual(
+            set(signature["required"]),
+            {"algorithm", "keyVersion", "publicKey", "publicKeyDigest", "value", "payloadDigest"},
+        )
+        provenance = schema["$defs"]["evidenceReference"]["properties"]["uri"]["pattern"]
+        self.assertEqual(
+            provenance,
+            r"^https://github\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$",
+        )
+
     @staticmethod
     def _digest(character):
         return "sha256:" + character * 64
+
+    @staticmethod
+    def _sign_infrastructure_export(export):
+        resources = sorted(
+            export["spec"]["resources"],
+            key=lambda resource: (resource["kind"], resource["name"], resource["uri"]),
+        )
+        export["spec"]["resources"] = resources
+        metadata = export["metadata"]
+        canonical_metadata = {
+            field: metadata[field]
+            for field in (
+                "environment", "stack", "sourceRepository", "sourceCommit", "root",
+                "planDigest", "providerLockDigest", "backendStateDigest", "backendLineage",
+                "backendSerial", "schemaDigest", "generatedAt",
+            )
+        }
+        provenance = export["spec"]["evidence"]["provenance"]
+        payload = {
+            "apiVersion": export["apiVersion"],
+            "kind": export["kind"],
+            "metadata": canonical_metadata,
+            "spec": {"resources": resources, "provenance": provenance},
+        }
+        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        public_key, signature_value = _p256_sign(encoded)
+        signature = {
+            "algorithm": "EC_SIGN_P256_SHA256",
+            "keyVersion": "projects/mindclade-bootstrap/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/7",
+            "publicKey": base64.b64encode(public_key).decode("ascii"),
+            "publicKeyDigest": "sha256:" + hashlib.sha256(public_key).hexdigest(),
+            "value": base64.b64encode(signature_value).decode("ascii"),
+            "payloadDigest": "sha256:" + hashlib.sha256(encoded).hexdigest(),
+        }
+        export["spec"]["evidence"] = {"signature": signature, "provenance": provenance}
+        return export
 
     def _active_environment(self, root, environment="development", initial_percent=0):
         directory = root / "environments" / environment
@@ -135,24 +258,38 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "environment": environment,
                 "stack": "clusters",
                 "sourceRepository": "mindclade/infrastructure-live",
-                "sourceCommit": "e" * 40,
+                "sourceCommit": INFRASTRUCTURE_EXPORT_PRODUCER_COMMIT,
                 "root": f"opentofu/live/{environment}/clusters",
                 "planDigest": self._digest("2"),
-                "schemaDigest": self._digest("3"),
+                "providerLockDigest": self._digest("3"),
+                "backendStateDigest": self._digest("4"),
+                "backendLineage": "123e4567-e89b-42d3-a456-426614174000",
+                "backendSerial": 17,
+                "schemaDigest": INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST,
                 "generatedAt": "2026-08-29T12:00:00Z",
             },
             "spec": {
-                "resources": [{
-                    "kind": "cluster-membership",
-                    "name": "dev-cluster",
-                    "uri": "//gkehub.googleapis.com/projects/dev/locations/global/memberships/dev-cluster",
-                }],
+                "resources": [
+                    {
+                        "kind": "gke-cluster",
+                        "name": "dev-cluster",
+                        "uri": "//container.googleapis.com/projects/dev/locations/us-central1/clusters/dev-cluster",
+                    },
+                    {
+                        "kind": "cluster-membership",
+                        "name": "dev-cluster",
+                        "uri": "//gkehub.googleapis.com/projects/dev/locations/global/memberships/dev-cluster",
+                    },
+                ],
                 "evidence": {
-                    "signature": {"uri": "https://evidence.example/signature", "digest": self._digest("4")},
-                    "provenance": {"uri": "https://evidence.example/provenance", "digest": self._digest("5")},
+                    "provenance": {
+                        "uri": "https://github.com/mindclade/infrastructure-live/actions/runs/123456/attempts/1",
+                        "digest": self._digest("5"),
+                    },
                 },
             },
         }
+        self._sign_infrastructure_export(infrastructure_export)
         platform_release = {
             "component": "kueue",
             "cluster": "dev-cluster",
@@ -430,6 +567,43 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 'contains undeclared field "accounts.backdoor"',
             ),
             (
+                "premature-sso-url",
+                "controllers/argocd/resource-customizations.yaml",
+                '  statusbadge.enabled: "false"',
+                '  statusbadge.enabled: "false"\n'
+                "  url: https://argocd.example.invalid",
+                'contains undeclared field "url"',
+            ),
+            (
+                "premature-dex-configuration",
+                "controllers/argocd/resource-customizations.yaml",
+                '  statusbadge.enabled: "false"',
+                '  statusbadge.enabled: "false"\n'
+                '  dex.config: "{}"',
+                'contains undeclared field "dex.config"',
+            ),
+            (
+                "sso-team-contract",
+                "controllers/argocd/repository-credentials-reference.yaml",
+                "      - platform-operations",
+                "      - platform",
+                "sso-contract.teams[0] must equal",
+            ),
+            (
+                "sso-callback-contract",
+                "controllers/argocd/repository-credentials-reference.yaml",
+                "    callbackPath: /api/dex/callback",
+                "    callbackPath: /oauth2/callback",
+                "sso-contract identity must remain canonical",
+            ),
+            (
+                "sso-activation-gate",
+                "controllers/argocd/repository-credentials-reference.yaml",
+                "  activation-gate: blocked-pending-jit-05",
+                "  activation-gate: active",
+                "must remain inactive behind JIT-05",
+            ),
+            (
                 "rbac-escalation",
                 "controllers/argocd/kustomization.yaml",
                 "          g, mindclade:platform-operations, role:platform-operator",
@@ -638,6 +812,33 @@ class SchemaCompatibilityTest(unittest.TestCase):
         finally:
             directory.cleanup()
 
+    def test_infrastructure_export_preserves_backend_serial_above_float_precision(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
+
+        directory, repository = self._repository_copy()
+        try:
+            self._active_environment(repository)
+            path = repository / "environments/development/infrastructure-exports.yaml"
+            wrapper = json.loads(path.read_text())
+            wrapper["exports"][0]["metadata"]["backendSerial"] = 2**53 + 1
+            self._sign_infrastructure_export(wrapper["exports"][0])
+            path.write_text(json.dumps(wrapper, separators=(",", ":")) + "\n")
+            for filename, collection in {
+                "platform-releases.yaml": "releases",
+                "service-releases.yaml": "releases",
+                "worker-releases.yaml": "releases",
+                "policy-bindings.yaml": "bindings",
+                "secret-references.yaml": "references",
+            }.items():
+                self._set_inactive(repository, "development", filename, collection)
+            result = self._validate(repository)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("external signature and attestation verification is pending JIT-09", result.stderr)
+            self.assertNotIn("payloadDigest", result.stderr)
+        finally:
+            directory.cleanup()
+
     def test_cluster_server_rejects_credentials_and_mutable_components(self):
         if self.promotectl is None:
             self.skipTest("Go toolchain is unavailable")
@@ -689,6 +890,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                         export_path = repository / "environments/staging/infrastructure-exports.yaml"
                         exports = json.loads(export_path.read_text())
                         exports["exports"][0]["spec"]["resources"][0]["name"] = "staging-cluster"
+                        self._sign_infrastructure_export(exports["exports"][0])
                         export_path.write_text(json.dumps(exports, separators=(",", ":")) + "\n")
                         for filename in (
                             "platform-releases.yaml",
@@ -720,6 +922,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "duplicate-resource": lambda wrapper: wrapper["exports"].append({**copy.deepcopy(wrapper["exports"][0]), "metadata": {**wrapper["exports"][0]["metadata"], "stack": "network", "root": "opentofu/live/development/network"}}),
             "unknown-nested-field": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"]["signature"].update(token="forbidden"),
             "missing-membership": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][0].update(name="different-cluster"),
+            "old-signature-reference": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"].update(signature={"uri": "https://evidence.example/signature", "digest": self._digest("4")}),
+            "generic-provenance": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"]["provenance"].update(uri="https://evidence.example/provenance"),
+            "wrong-gke-provider": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][1].update(uri="//gkehub.googleapis.com/projects/dev/locations/us-central1/clusters/dev-cluster"),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
@@ -732,6 +937,46 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     path.write_text(json.dumps(wrapper, separators=(",", ":")) + "\n")
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
+                finally:
+                    directory.cleanup()
+
+    def test_infrastructure_export_signature_consistency_rejects_tampering(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
+
+        mutations = {
+            "signed-backend-state": (
+                lambda export: export["metadata"].update(backendStateDigest=self._digest("9")),
+                "signature payloadDigest does not match the canonical export payload",
+            ),
+            "payload-digest": (
+                lambda export: export["spec"]["evidence"]["signature"].update(payloadDigest=self._digest("9")),
+                "signature payloadDigest does not match the canonical export payload",
+            ),
+            "public-key-digest": (
+                lambda export: export["spec"]["evidence"]["signature"].update(publicKeyDigest=self._digest("9")),
+                "signature publicKeyDigest does not match the embedded public key",
+            ),
+            "signature-value": (
+                lambda export: export["spec"]["evidence"]["signature"].update(
+                    value="A" + export["spec"]["evidence"]["signature"]["value"][1:]
+                ),
+                "GCP KMS ECDSA P-256 signature verification failed",
+            ),
+        }
+        for name, (mutate, expected) in mutations.items():
+            with self.subTest(name=name):
+                directory, repository = self._repository_copy()
+                try:
+                    self._active_environment(repository)
+                    path = repository / "environments/development/infrastructure-exports.yaml"
+                    wrapper = json.loads(path.read_text())
+                    mutate(wrapper["exports"][0])
+                    path.write_text(json.dumps(wrapper, separators=(",", ":")) + "\n")
+                    result = self._validate(repository)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(expected, result.stderr)
+                    self.assertNotIn("pending JIT-09", result.stderr)
                 finally:
                     directory.cleanup()
 

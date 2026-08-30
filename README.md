@@ -92,15 +92,14 @@ with dots: `<environment>.root.<cluster>`,
 Source activation is blocked until all of the following exist and have been
 reviewed outside this repository:
 
-- protected GitHub environments named `<environment>-promotion`, with required
-  reviewer rules for `release-engineering`, `platform-operations`, and
-  `security` as applicable to the release unit;
+- the protected GitHub environment named `production-promotion`, with the
+  `release-engineering` reviewer and distinct-principal/code-owner separation
+  declared by `github-config`;
 - repository variable `CONNECTED_GOVERNANCE_READY=true`, set only after branch
   protection, required checks, merge-queue behavior, and environment rules are
   qualified;
-- environment-scoped `PROMOTION_GOVERNANCE_EVIDENCE` containing the immutable
-  `sha256:` digest of that qualification evidence in every environment,
-  including development and staging;
+- `production-promotion`-scoped `PROMOTION_GOVERNANCE_EVIDENCE` containing the
+  immutable `sha256:` digest of that qualification evidence;
 - environment-scoped `PROMOTION_TRUSTED_SIGNER` and
   `PROMOTION_TRUSTED_ISSUER` identities, controlled with the same protected
   environment review rules;
@@ -113,11 +112,15 @@ reviewed outside this repository:
 Until then, AppProject destinations remain empty, all environment arrays remain
 inactive, and the ApplicationSets emit zero Applications.
 
-The initial source carries a `blocked-pending-jit-09` evidence-verifier gate.
-Both protected workflows exit without creating completion evidence, and source
-validation rejects every active environment, until a reviewed change adds and
-qualifies actual cryptographic signature/attestation verification. Setting
-repository or environment variables alone cannot bypass this code-level gate.
+The manual promotion and rollback dispatch surfaces accept only `production`
+and bind directly to `production-promotion`, the sole protected promotion
+environment in the current governance catalog. That restriction grants no
+production authority. The initial source carries a `blocked-pending-jit-09`
+evidence-verifier gate. Both protected workflows exit without creating
+completion evidence, and source validation rejects every active environment,
+until a reviewed change adds and qualifies actual cryptographic
+signature/attestation verification. Setting repository or environment
+variables alone cannot bypass this code-level gate.
 
 ## Local validation
 
@@ -170,11 +173,12 @@ preflight and must not be inferred from its result.
 
 ## Promotion contract
 
-The current promotion and rollback workflows are pre-production gates, not
-operational promotion implementations. They validate immutable input grammar
-and the requested prior/current digest against the exact component, cluster,
-and release class in the checked-out environment record, then stop at JIT-09.
-They neither write desired state nor emit a promotion or rollback receipt.
+The current production-only promotion and rollback workflows are source gates,
+not operational promotion implementations. They validate immutable input
+grammar and the requested prior/current digest against the exact component,
+cluster, and release class in the checked-out production record, then stop at
+JIT-09. They neither write desired state nor emit a promotion or rollback
+receipt.
 
 The `promotectl receipt` and `promotectl rollback` commands validate the current
 v1 receipt payload contract for source testing only. A blueprint-authoritative

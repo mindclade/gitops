@@ -18,9 +18,58 @@ ALLOWED_OWNER_TEAMS = {
     "@mindclade/release-engineering",
     "@mindclade/security",
 }
+EXPECTED_ARGO_SSO_TEAMS = [
+    "platform-operations",
+    "release-engineering",
+    "security",
+]
 
 
 class LiveObjectDiffTest(unittest.TestCase):
+    def assert_dormant_argo_sso_contract(self, core_config, credential_contract):
+        core_data = re.search(r"(?ms)^data:\n(?P<body>.*)\Z", core_config)
+        self.assertIsNotNone(core_data, "argocd-cm lacks data")
+        effective_keys = set(
+            re.findall(r"(?m)^  ([A-Za-z0-9_.-]+):", core_data["body"])
+        )
+        self.assertNotIn("url", effective_keys)
+        self.assertNotIn("dex.config", effective_keys)
+
+        self.assertIn("gitops.mindclade.io/activation: inactive", credential_contract)
+        self.assertIn("  status: inactive", credential_contract)
+        self.assertIn(
+            "  activation-gate: blocked-pending-jit-05",
+            credential_contract,
+        )
+        self.assertNotRegex(credential_contract, r"(?m)^kind:\s+ExternalSecret\s*$")
+
+        sso = re.search(
+            r"(?m)^  sso-contract: \|\n(?P<body>(?:^    .*\n?)*)",
+            credential_contract,
+        )
+        self.assertIsNotNone(sso, "inactive credential contract lacks SSO intent")
+        self.assertIn("    provider: github", sso["body"])
+        self.assertIn("    org: mindclade", sso["body"])
+        self.assertIn("    teamNameField: slug", sso["body"])
+        self.assertIn("    callbackPath: /api/dex/callback", sso["body"])
+        self.assertEqual(
+            re.findall(r"(?m)^      - ([a-z-]+)$", sso["body"]),
+            EXPECTED_ARGO_SSO_TEAMS,
+        )
+
+        requirements = re.search(
+            r"(?m)^  activation-requirements: \|\n(?P<body>(?:^    .*\n?)*)",
+            credential_contract,
+        )
+        self.assertIsNotNone(requirements, "credential contract lacks activation requirements")
+        self.assertIn("JIT-05 ratifies", requirements["body"])
+        self.assertIn("/api/dex/callback exactly", requirements["body"])
+        self.assertIn("activated atomically in one reviewed change", requirements["body"])
+        self.assertIn(
+            "argocd-cm omits data.url and data.dex.config",
+            requirements["body"],
+        )
+
     def test_exact_blueprint_file_count(self):
         files = [path for path in ROOT.rglob("*") if path.is_file() and ".git" not in path.parts]
         self.assertEqual(len(files), 126)
@@ -73,6 +122,83 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertNotIn("secretStoreRef:", contract)
         self.assertNotIn("remoteRef:", contract)
 
+    def test_argo_sso_is_dormant_until_atomic_activation(self):
+        core_config = (ROOT / "controllers/argocd/resource-customizations.yaml").read_text()
+        credential_contract = (
+            ROOT / "controllers/argocd/repository-credentials-reference.yaml"
+        ).read_text()
+        self.assert_dormant_argo_sso_contract(core_config, credential_contract)
+
+    def test_argo_sso_contract_assertions_reject_unsafe_mutations(self):
+        core_config = (ROOT / "controllers/argocd/resource-customizations.yaml").read_text()
+        credential_contract = (
+            ROOT / "controllers/argocd/repository-credentials-reference.yaml"
+        ).read_text()
+        cases = {
+            "effective-url": (
+                core_config.replace(
+                    "\ndata:\n",
+                    "\ndata:\n  url: https://argocd.example.invalid\n",
+                    1,
+                ),
+                credential_contract,
+            ),
+            "effective-dex-config": (
+                core_config.replace(
+                    "\ndata:\n",
+                    "\ndata:\n  dex.config: |\n    connectors: []\n",
+                    1,
+                ),
+                credential_contract,
+            ),
+            "wrong-org": (
+                core_config,
+                credential_contract.replace("    org: mindclade", "    org: lookalike"),
+            ),
+            "login-instead-of-slug": (
+                core_config,
+                credential_contract.replace(
+                    "    teamNameField: slug",
+                    "    teamNameField: login",
+                ),
+            ),
+            "broadened-team-set": (
+                core_config,
+                credential_contract.replace(
+                    "      - security",
+                    "      - security\n      - contractors",
+                ),
+            ),
+            "wrong-callback": (
+                core_config,
+                credential_contract.replace(
+                    "/api/dex/callback",
+                    "/oauth/callback",
+                ),
+            ),
+            "missing-jit-gate": (
+                core_config,
+                credential_contract.replace(
+                    "  activation-gate: blocked-pending-jit-05\n",
+                    "",
+                ),
+            ),
+            "non-atomic-activation": (
+                core_config,
+                credential_contract.replace(
+                    "activated atomically in one reviewed change",
+                    "activated independently",
+                ),
+            ),
+        }
+        for mutation, (mutated_core, mutated_contract) in cases.items():
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(AssertionError):
+                    self.assert_dormant_argo_sso_contract(
+                        mutated_core,
+                        mutated_contract,
+                    )
+
     def test_namespace_pss_version_matches_validated_kubernetes_minor(self):
         namespace = (ROOT / "controllers/argocd/namespace.yaml").read_text()
         self.assertNotIn("pod-security.kubernetes.io/enforce-version: latest", namespace)
@@ -81,10 +207,27 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_source_validation_covers_main_and_merge_queue(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
+        self.assertTrue(workflow.startswith("name: Pull request\n"))
+        self.assertIn("\n  required:\n    name: required\n", workflow)
         self.assertIn("push:\n    branches: [main]", workflow)
         self.assertIn("merge_group:\n    types: [checks_requested]", workflow)
         self.assertIn("kubeconform -strict", workflow)
         self.assertIn("kustomize build", workflow)
+
+    def test_all_workflows_use_the_organization_approved_checkout_pin(self):
+        expected = (
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 "
+            "# v7.0.1"
+        )
+        stale = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+        workflow_directory = ROOT / ".github" / "workflows"
+        workflows = sorted(workflow_directory.glob("*.yml"))
+        self.assertEqual(len(workflows), 4)
+        for path in workflows:
+            with self.subTest(workflow=path.name):
+                source = path.read_text()
+                self.assertIn(expected, source)
+                self.assertNotIn(stale, source)
 
     def test_bazelisk_uses_pinned_bazel_release(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()

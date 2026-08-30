@@ -21,6 +21,12 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn("PROMOTION_GOVERNANCE_EVIDENCE", workflow)
         self.assertIn("PROMOTION_TRUSTED_SIGNER", workflow)
         self.assertIn("PROMOTION_TRUSTED_ISSUER", workflow)
+        self.assertIn("options: [production]", workflow)
+        self.assertNotIn(
+            "options: [development, staging, production, restricted]", workflow
+        )
+        self.assertIn("name: production-promotion", workflow)
+        self.assertNotIn("name: ${{ inputs.environment }}-promotion", workflow)
         self.assertIn("previous_digest:", workflow)
         self.assertIn('--artifact-digest "$PREVIOUS_DIGEST"', workflow)
         self.assertIn('test "$AUTOMATION_REVISION" = "$GITHUB_SHA"', workflow)
@@ -44,6 +50,25 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertNotIn("kubectl", workflow)
         self.assertNotIn("argocd app", workflow)
         self.assertNotIn("contents: write", workflow)
+
+        promotion_workflow = (ROOT / ".github/workflows/promotion.yml").read_text()
+        self.assertIn("options: [production]", promotion_workflow)
+        self.assertNotIn(
+            "options: [development, staging, production, restricted]",
+            promotion_workflow,
+        )
+        self.assertIn("name: production-promotion", promotion_workflow)
+        self.assertNotIn(
+            "name: ${{ inputs.environment }}-promotion", promotion_workflow
+        )
+
+    def test_emergency_runbook_stops_at_jit_09_without_claiming_a_receipt(self):
+        runbook = (ROOT / "runbooks/emergency-rollback.md").read_text()
+        self.assertIn("fail-closed JIT-09 gate", runbook)
+        self.assertIn("does not change desired state", runbook)
+        self.assertIn("not a rollback receipt", runbook)
+        self.assertNotIn("Review the emitted receipt checksum", runbook)
+        self.assertNotIn("before declaring recovery", runbook)
 
 
 if __name__ == "__main__":
