@@ -54,7 +54,10 @@ bootstrap-check:
       exit 1
     fi
 
-validate: fmt-check go-test python-test policy-test bootstrap-check
+lint-ci:
+    actionlint .github/workflows/*.yml
+
+validate: fmt-check go-test python-test policy-test bootstrap-check lint-ci
     cd tooling && go run ./cmd/promotectl validate --root ..
 
 render environment:

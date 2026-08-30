@@ -90,7 +90,7 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_exact_blueprint_file_count(self):
         files = [path for path in ROOT.rglob("*") if path.is_file() and ".git" not in path.parts]
-        self.assertEqual(len(files), 128)
+        self.assertEqual(len(files), 129)
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):

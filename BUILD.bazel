@@ -69,6 +69,7 @@ filegroup(
     srcs = [
         ".editorconfig",
         ".github/CODEOWNERS",
+        ".github/actionlint.yaml",
         ".github/dependabot.yml",
         ".github/pull_request_template.md",
         ".gitignore",

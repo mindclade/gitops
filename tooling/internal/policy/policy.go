@@ -168,7 +168,7 @@ func addPaths(target map[string]bool, prefix string, names ...string) {
 func ExpectedSourceFiles() map[string]bool {
 	expected := map[string]bool{}
 	addPaths(expected, "", ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile")
-	addPaths(expected, ".github", "CODEOWNERS", "dependabot.yml", "pull_request_template.md")
+	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "dependabot.yml", "pull_request_template.md")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
 	addPaths(expected, "controllers/argocd", "namespace.yaml", "repository-credentials-reference.yaml", "notifications.yaml", "resource-customizations.yaml", "kustomization.yaml")
 	addPaths(expected, "controllers/applicationsets", "platform-components.yaml", "control-plane-services.yaml", "execution-workers.yaml", "environment-root.yaml")
@@ -473,8 +473,8 @@ func ValidateRepositoryWithOptions(root string, options ValidationOptions) error
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
 	}
-	if len(expected) != 128 {
-		return fmt.Errorf("internal source manifest has %d files, expected 128", len(expected))
+	if len(expected) != 129 {
+		return fmt.Errorf("internal source manifest has %d files, expected 129", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
