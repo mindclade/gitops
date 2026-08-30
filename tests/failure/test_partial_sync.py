@@ -49,8 +49,34 @@ class PartialSyncTest(unittest.TestCase):
                 self.assertIn("governance-evidence-digest", text)
             self.assertIn("applicationsSync: create-update", text)
             self.assertIn("preserveResourcesOnDeletion: true", text)
+            self.assertIn("FailOnSharedResource=true", text)
             self.assertNotIn("prune: true", text)
             self.assertNotRegex(text, r"targetRevision:\s*(?:main|HEAD|master)")
+
+    def test_restricted_workloads_use_the_restricted_project(self):
+        expected_projects = {
+            "control-plane-services.yaml": (
+                '{{ if eq .environment "restricted" }}restricted'
+                "{{ else }}services{{ end }}"
+            ),
+            "execution-workers.yaml": (
+                '{{ if eq .environment "restricted" }}restricted'
+                "{{ else }}workers{{ end }}"
+            ),
+        }
+        for filename, project in expected_projects.items():
+            text = (ROOT / "controllers/applicationsets" / filename).read_text()
+            self.assertIn(f"project: '{project}'", text)
+
+    def test_contract_config_maps_have_stable_names(self):
+        kustomizations = [
+            *(ROOT / "environments").glob("*/kustomization.yaml"),
+            *(ROOT / "platform").glob("*/kustomization.yaml"),
+        ]
+        self.assertEqual(len(kustomizations), 11)
+        for path in kustomizations:
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertIn("disableNameSuffixHash: true", path.read_text())
 
     def test_application_names_partition_environment_and_release_class(self):
         expected_templates = {

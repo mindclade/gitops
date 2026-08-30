@@ -28,7 +28,7 @@ spec:
         gitops.mindclade.io/promotion-receipt-digest: '{{.promotionReceiptDigest}}'
         gitops.mindclade.io/governance-evidence-digest: '{{.governanceEvidenceDigest}}'
     spec:
-      project: services
+      project: '{{ if eq .environment "restricted" }}restricted{{ else }}services{{ end }}'
       source:
         repoURL: https://github.com/mindclade/gitops.git
         targetRevision: '{{.desiredStateRevision}}'
@@ -44,6 +44,7 @@ spec:
           - CreateNamespace=false
           - ApplyOutOfSyncOnly=true
           - RespectIgnoreDifferences=true
+          - FailOnSharedResource=true
   syncPolicy:
     applicationsSync: create-update
     preserveResourcesOnDeletion: true

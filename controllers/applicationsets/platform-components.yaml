@@ -41,6 +41,7 @@ spec:
           - CreateNamespace=false
           - ApplyOutOfSyncOnly=true
           - RespectIgnoreDifferences=true
+          - FailOnSharedResource=true
   syncPolicy:
     applicationsSync: create-update
     preserveResourcesOnDeletion: true

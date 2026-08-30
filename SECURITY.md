@@ -14,8 +14,10 @@ report.
   ExternalSecret references after ESO and a store are qualified; the initial
   binding contract is inactive and contains neither store nor remote-key names.
   This repository never contains credential values.
-- Production and restricted releases use immutable `sha256:` digests with
-  signed provenance, SBOM, vulnerability, approval, and rollback evidence.
+- Any activated release, in every environment, uses an immutable `sha256:`
+  digest with signed provenance, SBOM, vulnerability, protected-approval, and
+  governance evidence. Production and restricted releases additionally retain
+  the applicable protected rollout and rollback evidence.
 - GitHub workflows have read-only source permissions and no cloud or cluster
   credentials. They validate evidence but cannot deploy.
 - Emergency action follows the protected runbooks and is reconstructed in Git

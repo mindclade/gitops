@@ -19,7 +19,7 @@
           "component": {"enum": ["kueue", "jobset", "otel-collector", "external-secrets", "policy-controller", "gpu-operator", "ingress"]},
           "cluster": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$"},
           "namespace": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"},
-          "artifact": {"type": "string", "pattern": "^oci://\\S+@sha256:[0-9a-f]{64}$"},
+          "artifact": {"type": "string", "pattern": "^oci://[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$"},
           "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "priorDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},

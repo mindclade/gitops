@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	digestPattern   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	digestPattern           = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	revisionPattern         = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	workloadArtifactPattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$`)
+	platformArtifactPattern = regexp.MustCompile(`^oci://[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$`)
 )
 
 var Environments = []string{"development", "staging", "production", "restricted"}
@@ -36,6 +38,27 @@ func ValidateDigest(value string) error {
 func ValidateRevision(value string) error {
 	if !revisionPattern.MatchString(value) {
 		return fmt.Errorf("%q is not a 40-character source revision", value)
+	}
+	return nil
+}
+
+// ValidateArtifactReference enforces the canonical immutable reference grammar
+// shared by release records, receipts, and workflow prefilters. Platform
+// artifacts are OCI references; deployable workloads use container image
+// references without a URL scheme. Neither form permits userinfo, tags, query
+// strings, fragments, whitespace, or additional at-signs.
+func ValidateArtifactReference(value, releaseClass string) error {
+	var valid bool
+	switch releaseClass {
+	case "platform":
+		valid = platformArtifactPattern.MatchString(value)
+	case "service", "worker":
+		valid = workloadArtifactPattern.MatchString(value)
+	default:
+		return fmt.Errorf("unknown release class %q", releaseClass)
+	}
+	if !valid {
+		return fmt.Errorf("%q is not a canonical immutable %s artifact reference", value, releaseClass)
 	}
 	return nil
 }

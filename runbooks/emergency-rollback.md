@@ -1,5 +1,8 @@
 # Emergency rollback
 
+Owner: `@mindclade/release`
+Last reviewed: `2026-08-30`
+
 ## Preconditions
 
 Emergency urgency does not permit mutable tags, missing evidence, plaintext

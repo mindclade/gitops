@@ -16,10 +16,9 @@ const (
 )
 
 var (
-	positiveIntegerPattern   = regexp.MustCompile(`^[1-9][0-9]*$`)
-	requesterPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.\-\[\]]{0,127}$`)
-	componentPattern         = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$`)
-	artifactReferencePattern = regexp.MustCompile(`^[^[:space:]]+@sha256:[0-9a-f]{64}$`)
+	positiveIntegerPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
+	requesterPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.\-\[\]]{0,127}$`)
+	componentPattern       = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$`)
 )
 
 type Receipt struct {
@@ -80,8 +79,8 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 	if receipt.ArtifactDigest == receipt.PriorDigest {
 		return fmt.Errorf("artifact and prior digests must differ")
 	}
-	if !artifactReferencePattern.MatchString(receipt.ArtifactReference) {
-		return fmt.Errorf("artifact reference must be a complete immutable sha256 reference")
+	if err := release.ValidateArtifactReference(receipt.ArtifactReference, receipt.ReleaseClass); err != nil {
+		return err
 	}
 	if !strings.HasSuffix(receipt.ArtifactReference, "@"+receipt.ArtifactDigest) {
 		return fmt.Errorf("artifact reference digest must match artifact digest")
@@ -117,7 +116,7 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 	}
 	unique := map[string]bool{}
 	for _, approval := range receipt.Approvals {
-		if strings.TrimSpace(approval) != approval || len(approval) < 3 || len(approval) > 256 {
+		if strings.TrimSpace(approval) != approval || strings.ContainsAny(approval, "\r\n") || len(approval) < 3 || len(approval) > 256 {
 			return fmt.Errorf("approval records must be canonical strings between 3 and 256 characters")
 		}
 		if unique[approval] {
@@ -130,20 +129,23 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 	}
 	context := "github-environment:" + receipt.Environment + "-promotion"
 	hasContext := false
-	hasGovernanceEvidence := false
+	governanceEvidenceCount := 0
 	for approval := range unique {
-		if approval == context {
+		if strings.HasPrefix(approval, "github-environment:") {
+			if approval != context {
+				return fmt.Errorf("approval context %q does not match environment %q", approval, receipt.Environment)
+			}
 			hasContext = true
 		}
 		if strings.HasPrefix(approval, "governance-evidence:") {
 			if err := release.ValidateDigest(strings.TrimPrefix(approval, "governance-evidence:")); err != nil {
 				return fmt.Errorf("governance evidence must be an immutable sha256 digest: %w", err)
 			}
-			hasGovernanceEvidence = true
+			governanceEvidenceCount++
 		}
 	}
-	if !hasContext || !hasGovernanceEvidence {
-		return fmt.Errorf("receipt requires exact environment context and immutable governance evidence")
+	if !hasContext || governanceEvidenceCount != 1 {
+		return fmt.Errorf("receipt requires exact environment context and exactly one immutable governance evidence digest")
 	}
 	return nil
 }

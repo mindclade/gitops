@@ -1,5 +1,8 @@
 # Deployment drift
 
+Owner: `@mindclade/platform`
+Last reviewed: `2026-08-30`
+
 ## Scope
 
 Drift is any live object difference not explained by declared desired state,

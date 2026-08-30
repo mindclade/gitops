@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -21,16 +20,6 @@ import (
 )
 
 const version = "0.1.0"
-
-var bootstrapProvenanceKeys = []string{
-	"upstream-version",
-	"upstream-revision",
-	"upstream-url",
-	"upstream-sha256",
-	"argocd-image",
-	"dex-image",
-	"redis-image",
-}
 
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "promotectl:", err)
@@ -151,47 +140,11 @@ func transitionCommand(arguments []string) error {
 }
 
 func bootstrapProvenance(path string) (map[string]string, error) {
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	result := map[string]string{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
-		for _, key := range bootstrapProvenanceKeys {
-			prefix := key + "="
-			if strings.HasPrefix(line, prefix) {
-				result[key] = strings.TrimPrefix(line, prefix)
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	for _, key := range bootstrapProvenanceKeys {
-		if result[key] == "" {
-			return nil, fmt.Errorf("bootstrap provenance lacks %s", key)
-		}
-	}
-	if err := release.ValidateRevision(result["upstream-revision"]); err != nil {
-		return nil, err
-	}
-	if !strings.Contains(result["upstream-url"], result["upstream-revision"]) {
-		return nil, fmt.Errorf("bootstrap URL is not pinned to its declared revision")
-	}
-	if err := release.ValidateDigest("sha256:" + result["upstream-sha256"]); err != nil {
-		return nil, err
-	}
-	for _, key := range []string{"argocd-image", "dex-image", "redis-image"} {
-		parts := strings.Split(result[key], "@")
-		if len(parts) != 2 || parts[0] == "" || release.ValidateDigest(parts[1]) != nil {
-			return nil, fmt.Errorf("bootstrap provenance %s is not digest pinned", key)
-		}
-	}
-	return result, nil
+	return policy.BootstrapProvenance(data)
 }
 
 func verifyBootstrap(root string, fetch bool) error {

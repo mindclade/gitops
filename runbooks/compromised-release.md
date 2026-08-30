@@ -1,5 +1,8 @@
 # Compromised release
 
+Owner: `@mindclade/security`
+Last reviewed: `2026-08-30`
+
 ## Immediate actions
 
 1. Declare a security incident and freeze the affected digest across every

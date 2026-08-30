@@ -24,6 +24,19 @@ source has no approved service or worker component Kustomization roots. A future
 reviewed activation change must add those roots before admitting workload
 releases.
 
+Platform packages, policy bindings, and secret references are contract-only in
+this source revision. Each has its own code-level `unbound` implementation
+marker, and validation rejects activation until a reviewed deployable platform
+package, policy reconciler, or secret materializer replaces the corresponding
+marker. Root activation and the connected evidence verifier cannot implicitly
+activate any of these independent modules.
+
+The generated environment ConfigMap's `gitops.mindclade.io/activation` label
+mirrors only that atomic cluster-set/infrastructure root state. It is not a
+summary claiming that all seven environment documents are active. Platform,
+service, worker, policy, and secret documents retain their independent staged
+states after the root activates.
+
 The mapping is explicit: `cluster-set.yaml` drives the environment-root set;
 `platform-releases.yaml`, `service-releases.yaml`, and `worker-releases.yaml`
 drive their corresponding sets. Each active list item names its destination and
@@ -105,6 +118,14 @@ Rego, strict JSON Schemas, and the exact source tree. `verify-bootstrap`
 downloads the commit-pinned upstream Argo CD manifest and verifies its declared
 SHA-256. `just bazel-test` selects Bazel 9.2.0 through Bazelisk. Nothing in these
 commands connects to a cluster or promotes a release.
+
+The canonical Bazel recipe and CI deliberately pass `--lockfile_mode=off` because
+the current authoritative 126-file blueprint does not include
+`MODULE.bazel.lock`. A direct default Bzlmod command can generate that untracked
+audit byproduct and make exact-tree validation fail. Use `just bazel-test` for
+blueprint-conformant checks; do not interpret the lockfile exception as a claim
+that unpinned Bazel versions are acceptable.
+
 The canonical bootstrap is checked as Kubernetes 1.34 and the Argo namespace
 pins restricted Pod Security admission enforcement, audit, and warning to
 `v1.34` rather than a moving `latest` target.
@@ -113,6 +134,20 @@ A local or CI source `PASS` proves only those source contracts. It is not proof
 that a cluster exists, GitHub protection is configured, reviewers approved an
 operation, ESO can resolve credentials, Argo reconciled successfully, or live
 governance is qualified.
+
+The scheduled drift workflow is currently a source-contract and pinned-upstream
+integrity preflight. It has no cluster credentials and does not perform a live
+object comparison. Live drift qualification remains a connected activation
+preflight and must not be inferred from its result.
+
+## Operational runbooks
+
+- [Argo CD unavailable](runbooks/argocd-unavailable.md)
+- [Cluster rebootstrap](runbooks/cluster-rebootstrap.md)
+- [Compromised release](runbooks/compromised-release.md)
+- [Deployment drift](runbooks/deployment-drift.md)
+- [Emergency rollback](runbooks/emergency-rollback.md)
+- [Failed synchronization](runbooks/failed-synchronization.md)
 
 ## Promotion contract
 

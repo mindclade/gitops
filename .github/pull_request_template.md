@@ -8,7 +8,8 @@ Describe the desired-state, policy, tooling, or runbook change and its owner.
 - [ ] Every release reference is an immutable `sha256:` digest.
 - [ ] No plaintext secret, kubeconfig, token, private key, or partner data appears.
 - [ ] Infrastructure exports identify an immutable source commit.
-- [ ] Production/restricted approval and rollback evidence is attached when applicable.
+- [ ] Every activated or changed release references its protected promotion receipt and immutable governance evidence.
+- [ ] Production/restricted rollout and rollback evidence is attached when applicable.
 
 ## Validation
 

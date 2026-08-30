@@ -1,5 +1,8 @@
 # Failed synchronization
 
+Owner: `@mindclade/platform`
+Last reviewed: `2026-08-30`
+
 ## Trigger
 
 Use this runbook when an Argo Application reports `Failed`, `Error`, degraded

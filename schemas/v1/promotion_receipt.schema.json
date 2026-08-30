@@ -13,18 +13,61 @@
     "component": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$"},
     "cluster": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$"},
     "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-    "artifactReference": {"type": "string", "pattern": "^\\S+@sha256:[0-9a-f]{64}$"},
+    "artifactReference": {"type": "string", "pattern": "^(?:oci://)?[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[1-9][0-9]{0,4})?/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$"},
     "artifactDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "priorDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "attestationDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "signer": {"type": "string", "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$"},
     "issuer": {"type": "string", "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$"},
     "issuedAt": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
-    "approvals": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 3, "maxLength": 256}},
+    "approvals": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 256,
+        "pattern": "^\\S(?:[^\\r\\n]*\\S)?$",
+        "anyOf": [
+          {"pattern": "^governance-evidence:sha256:[0-9a-f]{64}$"},
+          {"not": {"pattern": "^governance-evidence:"}}
+        ]
+      },
+      "contains": {"pattern": "^governance-evidence:sha256:[0-9a-f]{64}$"},
+      "minContains": 1,
+      "maxContains": 1
+    },
     "repository": {"const": "mindclade/gitops"},
     "workflowRunID": {"type": "string", "pattern": "^[1-9][0-9]*$"},
     "workflowRunAttempt": {"type": "string", "pattern": "^[1-9][0-9]*$"},
     "checkedOutRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "requester": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.\\-\\[\\]]{0,127}$"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"required": ["releaseClass"], "properties": {"releaseClass": {"const": "platform"}}},
+      "then": {"properties": {"artifactReference": {"pattern": "^oci://"}}}
+    },
+    {
+      "if": {"required": ["releaseClass"], "properties": {"releaseClass": {"enum": ["service", "worker"]}}},
+      "then": {"properties": {"artifactReference": {"pattern": "^[a-z0-9]"}}}
+    },
+    {
+      "if": {"required": ["environment"], "properties": {"environment": {"const": "development"}}},
+      "then": {"properties": {"approvals": {"contains": {"const": "github-environment:development-promotion"}, "minContains": 1, "maxContains": 1, "items": {"anyOf": [{"const": "github-environment:development-promotion"}, {"not": {"pattern": "^github-environment:"}}]}}}}
+    },
+    {
+      "if": {"required": ["environment"], "properties": {"environment": {"const": "staging"}}},
+      "then": {"properties": {"approvals": {"contains": {"const": "github-environment:staging-promotion"}, "minContains": 1, "maxContains": 1, "items": {"anyOf": [{"const": "github-environment:staging-promotion"}, {"not": {"pattern": "^github-environment:"}}]}}}}
+    },
+    {
+      "if": {"required": ["environment"], "properties": {"environment": {"const": "production"}}},
+      "then": {"properties": {"approvals": {"contains": {"const": "github-environment:production-promotion"}, "minContains": 1, "maxContains": 1, "items": {"anyOf": [{"const": "github-environment:production-promotion"}, {"not": {"pattern": "^github-environment:"}}]}}}}
+    },
+    {
+      "if": {"required": ["environment"], "properties": {"environment": {"const": "restricted"}}},
+      "then": {"properties": {"approvals": {"contains": {"const": "github-environment:restricted-promotion"}, "minContains": 1, "maxContains": 1, "items": {"anyOf": [{"const": "github-environment:restricted-promotion"}, {"not": {"pattern": "^github-environment:"}}]}}}}
+    }
+  ]
 }

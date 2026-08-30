@@ -8,6 +8,10 @@ valid_digest(value) if {
   regex.match(`^sha256:[0-9a-f]{64}$`, value)
 }
 
+workload_release if {
+  input.releaseClass in {"service", "worker"}
+}
+
 deny contains sprintf("release %s lacks an immutable promotion receipt", [release.component]) if {
   input.active == true
   some release in input.releases
@@ -37,12 +41,28 @@ deny contains sprintf("release %s has non-immutable %s evidence", [release.compo
   not valid_digest(value)
 }
 
+deny contains sprintf("workload release %s is missing evaluation evidence", [release.component]) if {
+  input.active == true
+  workload_release
+  some release in input.releases
+  object.get(object.get(release, "evidence", {}), "evaluation", "") == ""
+}
+
+deny contains sprintf("workload release %s has non-immutable evaluation evidence", [release.component]) if {
+  input.active == true
+  workload_release
+  some release in input.releases
+  evaluation := object.get(object.get(release, "evidence", {}), "evaluation", "")
+  evaluation != ""
+  not valid_digest(evaluation)
+}
+
 deny contains sprintf("release %s has an invalid signer identity", [release.component]) if {
   input.active == true
   some release in input.releases
   signer := object.get(object.get(release, "evidence", {}), "signer", "")
   signer != ""
-  not startswith(signer, "https://")
+  not regex.match(`^https://[^/?#@\s]+(/[^?#\s]*)?$`, signer)
 }
 
 deny contains sprintf("release %s has an invalid issuer identity", [release.component]) if {
@@ -50,5 +70,5 @@ deny contains sprintf("release %s has an invalid issuer identity", [release.comp
   some release in input.releases
   issuer := object.get(object.get(release, "evidence", {}), "issuer", "")
   issuer != ""
-  not startswith(issuer, "https://")
+  not regex.match(`^https://[^/?#@\s]+(/[^?#\s]*)?$`, issuer)
 }

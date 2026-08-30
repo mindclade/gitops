@@ -12,6 +12,7 @@
 /schemas/ @mindclade/release @mindclade/platform
 /tooling/ @mindclade/release @mindclade/platform
 /runbooks/ @mindclade/platform @mindclade/security
+/runbooks/emergency-rollback.md @mindclade/release @mindclade/platform @mindclade/security
 /SECURITY.md @mindclade/security @mindclade/release
 /LICENSE @mindclade/release @mindclade/security
 /README.md @mindclade/release @mindclade/platform

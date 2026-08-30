@@ -24,7 +24,12 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn("--previous-digest", workflow)
         self.assertIn('test "$AUTOMATION_REVISION" = "$GITHUB_SHA"', workflow)
         self.assertIn('[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
-        self.assertIn('[[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]', workflow)
+        self.assertIn(
+            '[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*',
+            workflow,
+        )
+        self.assertIn('if [[ "$RELEASE_CLASS" = platform ]]', workflow)
+        self.assertIn('[[ "$ARTIFACT_REFERENCE" != oci://* ]]', workflow)
         self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$PREVIOUS_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
         self.assertIn("EVIDENCE_VERIFIER_IMPLEMENTATION: unbound", workflow)

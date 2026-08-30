@@ -19,6 +19,7 @@ bootstrap-check:
     set -euo pipefail
     command -v kustomize >/dev/null
     command -v kubeconform >/dev/null
+    (cd tooling && go run ./cmd/promotectl verify-bootstrap --root .. --fetch)
     render_dir=$(mktemp -d)
     trap 'rm -rf "$render_dir"' EXIT
     render_file="$render_dir/bootstrap.yaml"

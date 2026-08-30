@@ -107,7 +107,12 @@ jobs:
           [[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]
           test "$TRUSTED_SIGNER" != ""
           test "$TRUSTED_ISSUER" != ""
-          [[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]
+          [[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]
+          if [[ "$RELEASE_CLASS" = platform ]]; then
+            [[ "$ARTIFACT_REFERENCE" == oci://* ]]
+          else
+            [[ "$ARTIFACT_REFERENCE" != oci://* ]]
+          fi
           [[ "$ARTIFACT_REFERENCE" == *@"$ARTIFACT_DIGEST" ]]
           cd tooling
           go run ./cmd/promotectl verify-transition --root .. \

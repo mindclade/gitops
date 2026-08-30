@@ -53,6 +53,26 @@ class EvidenceChainTest(unittest.TestCase):
         artifact_reference_pattern = re.compile(schema["properties"]["artifactReference"]["pattern"])
         self.assertTrue(artifact_reference_pattern.fullmatch("registry.example/api@sha256:" + "a" * 64))
         self.assertFalse(artifact_reference_pattern.fullmatch("@sha256:" + "a" * 64))
+        approvals = schema["properties"]["approvals"]
+        self.assertEqual(
+            approvals["contains"]["pattern"],
+            "^governance-evidence:sha256:[0-9a-f]{64}$",
+        )
+        self.assertEqual(approvals["minContains"], 1)
+        self.assertEqual(approvals["maxContains"], 1)
+        contexts = {
+            condition["if"]["properties"]["environment"]["const"]:
+            condition["then"]["properties"]["approvals"]["contains"]["const"]
+            for condition in schema["allOf"]
+            if "environment" in condition["if"].get("properties", {})
+        }
+        self.assertEqual(
+            contexts,
+            {
+                environment: f"github-environment:{environment}-promotion"
+                for environment in ENVIRONMENTS
+            },
+        )
 
     def test_protected_workflow_evidence_is_not_user_supplied(self):
         workflow = (ROOT / ".github/workflows/promotion.yml").read_text()
@@ -68,7 +88,9 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertNotIn("id-token: write", workflow)
         self.assertIn('test "$AUTOMATION_REVISION" = "$GITHUB_SHA"', workflow)
         self.assertIn('[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
-        self.assertIn('[[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]', workflow)
+        self.assertIn('[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*', workflow)
+        self.assertIn('if [[ "$RELEASE_CLASS" = platform ]]', workflow)
+        self.assertIn('[[ "$ARTIFACT_REFERENCE" != oci://* ]]', workflow)
         self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$ARTIFACT_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
         self.assertIn("EVIDENCE_VERIFIER_IMPLEMENTATION: unbound", workflow)
@@ -119,6 +141,23 @@ class EvidenceChainTest(unittest.TestCase):
                 self.assertNotEqual(receipt["sourceRevision"], receipt["checkedOutRevision"])
                 self.assertEqual(receipt["repository"], "mindclade/gitops")
 
+    def test_receipt_accepts_canonical_artifact_reference_for_each_release_class(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
+        digest = "sha256:" + "b" * 64
+        cases = (
+            ("platform", f"oci://registry.example:5443/platform/kueue@{digest}"),
+            ("service", f"registry.example:5443/mindclade/api-service@{digest}"),
+            ("worker", f"registry.example/mindclade/training-worker@{digest}"),
+        )
+        for release_class, artifact_reference in cases:
+            with self.subTest(release_class=release_class):
+                result = self._receipt(**{
+                    "release-class": release_class,
+                    "artifact-reference": artifact_reference,
+                })
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_receipt_rejects_missing_malformed_or_mismatched_governance_in_every_environment(self):
         if self.promotectl is None:
             self.skipTest("Go toolchain is unavailable")
@@ -129,10 +168,14 @@ class EvidenceChainTest(unittest.TestCase):
                 f"{context},review:security",
                 f"{context},governance-evidence:not-a-digest",
                 f"github-environment:{other_environment}-promotion,governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},github-environment:{other_environment}-promotion,governance-evidence:{GOVERNANCE_DIGEST}",
                 f"{context},governance-evidence:not-a-digest,governance-evidence:{GOVERNANCE_DIGEST}",
                 f"{context},governance-evidence:{GOVERNANCE_DIGEST},governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},governance-evidence:{GOVERNANCE_DIGEST},governance-evidence:{'sha256:' + 'e' * 64}",
                 f"{context},governance-evidence:{GOVERNANCE_DIGEST},xx",
                 f"{context},governance-evidence:{GOVERNANCE_DIGEST},{'x' * 257}",
+                f"{context},review:security\napproval,governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},review:security\rapproval,governance-evidence:{GOVERNANCE_DIGEST}",
             )
             for approvals in invalid_approvals:
                 with self.subTest(environment=environment, approvals=approvals):
@@ -151,11 +194,25 @@ class EvidenceChainTest(unittest.TestCase):
             "registry.example/api@sha256:" + "a" * 64,
             "registry.example/api:latest",
             "registry.example/api@latest",
+            "registry.example/api@path@" + digest,
+            "https://registry.example/api@" + digest,
+            "registry.example/user:password@api@" + digest,
+            "registry.example/api?channel=stable@" + digest,
+            "registry.example/api#fragment@" + digest,
+            "Registry.example/api@" + digest,
+            "oci://registry.example/api@" + digest,
+            "registry.example/api_@" + digest,
         )
         for artifact_reference in invalid_references:
             with self.subTest(artifact_reference=artifact_reference):
                 result = self._receipt(**{"artifact-reference": artifact_reference})
                 self.assertNotEqual(result.returncode, 0, result.stdout)
+
+        platform_without_oci = self._receipt(**{
+            "release-class": "platform",
+            "artifact-reference": "registry.example/platform/kueue@" + digest,
+        })
+        self.assertNotEqual(platform_without_oci.returncode, 0, platform_without_oci.stdout)
 
     def test_receipt_rejects_unsafe_identity_stale_time_and_invalid_metadata(self):
         if self.promotectl is None:

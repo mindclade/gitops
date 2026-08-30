@@ -1,5 +1,8 @@
 # Argo CD unavailable
 
+Owner: `@mindclade/platform`
+Last reviewed: `2026-08-30`
+
 ## Trigger
 
 Use this runbook when the Argo API/UI or reconciliation controllers are

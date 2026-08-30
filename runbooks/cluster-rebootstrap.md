@@ -1,5 +1,8 @@
 # Cluster rebootstrap
 
+Owner: `@mindclade/platform`
+Last reviewed: `2026-08-30`
+
 ## Authority boundary
 
 Infrastructure Live restores the cluster, network, identities, and External
