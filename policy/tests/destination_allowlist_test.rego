@@ -7,7 +7,7 @@ test_rejects_wildcard_destination if {
   count(result) == 2
 }
 
-test_accepts_unbound_project if {
+test_accepts_inactive_project if {
   result := deny with input as {"bound": false, "destinations": [], "allowedDestinations": []}
   count(result) == 0
 }

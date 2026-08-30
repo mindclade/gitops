@@ -34,11 +34,11 @@ spec:
     warn: true
   roles:
     - name: promoter
-      groups: [mindclade:release]
+      groups: [mindclade:release-engineering]
       policies:
         - p, proj:workers:promoter, applications, get, workers/*, allow
         - p, proj:workers:promoter, applications, sync, workers/*, allow
     - name: operator
-      groups: [mindclade:platform]
+      groups: [mindclade:platform-operations]
       policies:
         - p, proj:workers:operator, applications, get, workers/*, allow

@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RestrictedRenderTest(unittest.TestCase):
-    def test_restricted_is_inactive_and_unbound(self):
+    def test_restricted_is_inactive_and_deny_all(self):
         directory = ROOT / "environments/restricted"
         documents = [json.loads(path.read_text()) for path in sorted(directory.glob("*.yaml")) if path.name != "kustomization.yaml"]
         self.assertEqual(len(documents), 7)

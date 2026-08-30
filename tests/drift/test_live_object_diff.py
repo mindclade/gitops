@@ -14,8 +14,8 @@ RUNBOOKS = {
     "Failed synchronization": "runbooks/failed-synchronization.md",
 }
 ALLOWED_OWNER_TEAMS = {
-    "@mindclade/platform",
-    "@mindclade/release",
+    "@mindclade/platform-operations",
+    "@mindclade/release-engineering",
     "@mindclade/security",
 }
 
@@ -36,7 +36,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             self.assertIsNone(re.search(r"(?m)^\s*stringData:\s*$", text), str(path))
             self.assertNotIn(":latest", text, str(path))
 
-    def test_projects_are_unbound_until_connected_qualification(self):
+    def test_projects_are_inactive_until_connected_qualification(self):
         expected_documents = {"default", "platform", "services", "workers", "restricted"}
         names = set()
         for path in (ROOT / "projects").glob("*.yaml"):
@@ -64,7 +64,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             self.assertIn(f"digest: sha256:{digest}", kustomization)
         self.assertNotIn("newTag:", kustomization)
 
-    def test_credential_binding_is_inactive_and_unbound(self):
+    def test_credential_binding_is_inactive_and_non_materializing(self):
         contract = (ROOT / "controllers/argocd/repository-credentials-reference.yaml").read_text()
         self.assertIn("kind: ConfigMap", contract)
         self.assertIn("status: inactive", contract)
@@ -181,30 +181,38 @@ class LiveObjectDiffTest(unittest.TestCase):
             patterns.append(pattern)
 
         expected = {
-            "*": {"@mindclade/release"},
-            "/.github/": {"@mindclade/release", "@mindclade/security"},
-            "/controllers/": {"@mindclade/platform", "@mindclade/security"},
-            "/projects/": {"@mindclade/platform", "@mindclade/security"},
-            "/platform/": {"@mindclade/platform", "@mindclade/release"},
-            "/environments/development/": {"@mindclade/release"},
+            "*": {"@mindclade/platform-operations"},
+            "/.github/": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/controllers/": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/projects/": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/platform/": {
+                "@mindclade/platform-operations",
+                "@mindclade/release-engineering",
+                "@mindclade/security",
+            },
+            "/environments/development/": {
+                "@mindclade/platform-operations",
+                "@mindclade/release-engineering",
+            },
             "/environments/staging/": {
-                "@mindclade/platform",
-                "@mindclade/release",
+                "@mindclade/platform-operations",
+                "@mindclade/release-engineering",
+                "@mindclade/security",
             },
             "/environments/production/": ALLOWED_OWNER_TEAMS,
             "/environments/restricted/": ALLOWED_OWNER_TEAMS,
-            "/policy/": {"@mindclade/release", "@mindclade/security"},
-            "/schemas/": {"@mindclade/platform", "@mindclade/release"},
-            "/tooling/": {"@mindclade/platform", "@mindclade/release"},
-            "/runbooks/": {"@mindclade/platform", "@mindclade/security"},
+            "/policy/": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/schemas/": ALLOWED_OWNER_TEAMS,
+            "/tooling/": ALLOWED_OWNER_TEAMS,
+            "/runbooks/": {"@mindclade/platform-operations", "@mindclade/security"},
             "/runbooks/emergency-rollback.md": ALLOWED_OWNER_TEAMS,
-            "/SECURITY.md": {"@mindclade/release", "@mindclade/security"},
-            "/LICENSE": {"@mindclade/release", "@mindclade/security"},
-            "/README.md": {"@mindclade/platform", "@mindclade/release"},
-            "/component.yaml": {"@mindclade/platform", "@mindclade/release"},
-            "/BUILD.bazel": {"@mindclade/platform", "@mindclade/release"},
-            "/MODULE.bazel": {"@mindclade/platform", "@mindclade/security"},
-            "/justfile": {"@mindclade/platform", "@mindclade/release"},
+            "/SECURITY.md": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/LICENSE": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/README.md": {"@mindclade/platform-operations", "@mindclade/release-engineering"},
+            "/component.yaml": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/BUILD.bazel": {"@mindclade/platform-operations", "@mindclade/release-engineering"},
+            "/MODULE.bazel": {"@mindclade/platform-operations", "@mindclade/security"},
+            "/justfile": {"@mindclade/platform-operations", "@mindclade/release-engineering"},
         }
         self.assertEqual(entries, expected)
         self.assertEqual(patterns[0], "*", "catch-all CODEOWNERS rule must be first")
@@ -239,7 +247,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             self.assertEqual(interval.group(1), "weekly")
             self.assertEqual(
                 reviewers,
-                {"mindclade/platform", "mindclade/security"},
+                {"mindclade/platform-operations", "mindclade/security"},
             )
             self.assertNotIn(match.group(1), configured)
             configured[match.group(1)] = directory.group(1)
@@ -256,13 +264,19 @@ class LiveObjectDiffTest(unittest.TestCase):
             "kind: Component",
             "  name: gitops",
             "    github.com/project-slug: mindclade/gitops",
+            "    mindclade.dev/security-owner: security",
+            "    mindclade.dev/trust-tier: deployment-control",
+            "    mindclade.dev/recovery-tier: isolated-git",
+            "    mindclade.io/qualification-status: FAIL",
             "  type: deployment-control-plane",
-            "  lifecycle: production",
-            "  maturity: production",
-            "  owner: release",
+            "  lifecycle: pre-production",
+            "  maturity: pre-production",
+            "  owner: platform-operations",
+            "  security_reviewers:",
+            "    - security",
             "  repository_class: deployment-source",
             "  data_classification: confidential",
-            "  production_authority: true",
+            "  production_authority: false",
             "    strategy: protected-digest-promotion",
             "    artifact: source-commit",
             "    immutable: true",
@@ -303,7 +317,8 @@ class LiveObjectDiffTest(unittest.TestCase):
             "Platform packages",
             "policy bindings",
             "secret references",
-            "code-level `unbound` implementation marker",
+            "`blocked-pending-jit-05` activation gate",
+            "`blocked-pending-jit-09` evidence-verifier gate",
         ):
             self.assertIn(blocker, readme)
         self.assertIn(

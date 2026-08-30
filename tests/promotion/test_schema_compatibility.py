@@ -432,16 +432,16 @@ class SchemaCompatibilityTest(unittest.TestCase):
             (
                 "rbac-escalation",
                 "controllers/argocd/kustomization.yaml",
-                "          g, mindclade:platform, role:platform-operator",
-                "          g, mindclade:platform, role:platform-operator\n"
+                "          g, mindclade:platform-operations, role:platform-operator",
+                "          g, mindclade:platform-operations, role:platform-operator\n"
                 "          p, role:release-promoter, clusters, *, *, allow",
                 "policy.csv must contain exactly the reviewed policy rules",
             ),
             (
                 "rbac-multiple-documents",
                 "controllers/argocd/kustomization.yaml",
-                "          g, mindclade:platform, role:platform-operator",
-                "          g, mindclade:platform, role:platform-operator\n"
+                "          g, mindclade:platform-operations, role:platform-operator",
+                "          g, mindclade:platform-operations, role:platform-operator\n"
                 "      ---\n"
                 "      apiVersion: v1\n"
                 "      kind: ConfigMap",
@@ -495,7 +495,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             path.write_text(document + "---\n" + document)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("must contain exactly one unbound project platform", result.stderr)
+            self.assertIn("must contain exactly one inactive project platform", result.stderr)
         finally:
             directory.cleanup()
 
@@ -574,12 +574,15 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "wrong-identity": lambda text: text.replace("  name: gitops", "  name: another-component"),
             "wrong-repository": lambda text: text.replace("mindclade/gitops", "fork/gitops"),
             "wrong-type": lambda text: text.replace("  type: deployment-control-plane", "  type: service"),
-            "wrong-lifecycle": lambda text: text.replace("  lifecycle: production", "  lifecycle: experimental"),
-            "wrong-owner": lambda text: text.replace("  owner: release", "  owner: application"),
-            "wrong-maturity": lambda text: text.replace("  maturity: production", "  maturity: beta"),
+            "wrong-lifecycle": lambda text: text.replace("  lifecycle: pre-production", "  lifecycle: production"),
+            "wrong-owner": lambda text: text.replace("  owner: platform-operations", "  owner: release-engineering"),
+            "wrong-maturity": lambda text: text.replace("  maturity: pre-production", "  maturity: production"),
             "wrong-repository-class": lambda text: text.replace("  repository_class: deployment-source", "  repository_class: product-source"),
             "wrong-data-classification": lambda text: text.replace("  data_classification: confidential", "  data_classification: public"),
-            "no-production-authority": lambda text: text.replace("  production_authority: true", "  production_authority: false"),
+            "premature-production-authority": lambda text: text.replace("  production_authority: false", "  production_authority: true"),
+            "wrong-trust-tier": lambda text: text.replace("mindclade.dev/trust-tier: deployment-control", "mindclade.dev/trust-tier: application"),
+            "wrong-recovery-tier": lambda text: text.replace("mindclade.dev/recovery-tier: isolated-git", "mindclade.dev/recovery-tier: none"),
+            "missing-security-reviewer": lambda text: text.replace("  security_reviewers:\n    - security\n", ""),
             "empty-dependencies": lambda text: text.replace(
                 "  dependencies:\n    - component:infrastructure-live\n    - component:mindclade",
                 "  dependencies: []",
@@ -596,7 +599,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "wrong-release-artifact": lambda text: text.replace("    artifact: source-commit", "    artifact: image-tag"),
             "mutable-release": lambda text: text.replace("    immutable: true", "    immutable: false"),
             "missing-evidence": lambda text: text.replace("      - policy-verification\n", ""),
-            "unknown-field": lambda text: text.replace("  owner: release", "  owner: release\n  undocumented: true"),
+            "unknown-field": lambda text: text.replace("  owner: platform-operations", "  owner: platform-operations\n  undocumented: true"),
             "multiple-documents": lambda text: text + "---\napiVersion: v1\nkind: ConfigMap\n",
         }
         for name, mutate in cases.items():
@@ -631,7 +634,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verifier implementation is unbound", result.stderr)
+            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
         finally:
             directory.cleanup()
 
@@ -661,7 +664,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     path.write_text(json.dumps(document, separators=(",", ":")) + "\n")
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertNotIn("external signature and attestation verifier implementation is unbound", result.stderr)
+                    self.assertNotIn("external signature and attestation verification is pending JIT-09", result.stderr)
                 finally:
                     directory.cleanup()
 
@@ -748,7 +751,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verifier implementation is unbound", result.stderr)
+            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
             self.assertNotIn("active state", result.stderr)
         finally:
             directory.cleanup()
@@ -776,7 +779,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
 
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verifier implementation is unbound", result.stderr)
+            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
             self.assertNotIn("active state", result.stderr)
         finally:
             directory.cleanup()
@@ -863,9 +866,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "secret-references.yaml": "references",
         }
         blockers = {
-            "platform-releases.yaml": "platform deployment implementation is unbound",
-            "policy-bindings.yaml": "policy binding reconciler implementation is unbound",
-            "secret-references.yaml": "secret reference materializer implementation is unbound",
+            "platform-releases.yaml": "platform deployment boundary is pending JIT-05 ratification and qualification",
+            "policy-bindings.yaml": "policy binding reconciliation boundary is pending JIT-05 ratification and qualification",
+            "secret-references.yaml": "secret reference materialization boundary is pending JIT-05 ratification and qualification",
         }
         for selected, expected in blockers.items():
             with self.subTest(selected=selected):
@@ -878,7 +881,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(expected, result.stderr)
-                    self.assertNotIn("external signature and attestation verifier implementation", result.stderr)
+                    self.assertNotIn("external signature and attestation verification", result.stderr)
                 finally:
                     directory.cleanup()
 
@@ -1148,7 +1151,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(filename, result.stderr)
-                    self.assertNotIn("implementation is unbound", result.stderr)
+                    self.assertNotIn("pending JIT-05", result.stderr)
                 finally:
                     directory.cleanup()
 
@@ -1178,7 +1181,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn("duplicate", result.stderr)
-                    self.assertNotIn("implementation is unbound", result.stderr)
+                    self.assertNotIn("pending JIT-05", result.stderr)
                 finally:
                     directory.cleanup()
 
@@ -1203,7 +1206,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             path.write_text(json.dumps(document, separators=(",", ":")) + "\n")
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("secret reference materializer implementation is unbound", result.stderr)
+            self.assertIn("secret reference materialization boundary is pending JIT-05 ratification and qualification", result.stderr)
             self.assertNotIn("duplicate", result.stderr)
         finally:
             directory.cleanup()

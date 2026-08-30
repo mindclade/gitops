@@ -1,22 +1,22 @@
-* @mindclade/release
+* @mindclade/platform-operations
 
-/.github/ @mindclade/release @mindclade/security
-/controllers/ @mindclade/platform @mindclade/security
-/projects/ @mindclade/platform @mindclade/security
-/platform/ @mindclade/platform @mindclade/release
-/environments/development/ @mindclade/release
-/environments/staging/ @mindclade/release @mindclade/platform
-/environments/production/ @mindclade/release @mindclade/platform @mindclade/security
-/environments/restricted/ @mindclade/release @mindclade/platform @mindclade/security
-/policy/ @mindclade/security @mindclade/release
-/schemas/ @mindclade/release @mindclade/platform
-/tooling/ @mindclade/release @mindclade/platform
-/runbooks/ @mindclade/platform @mindclade/security
-/runbooks/emergency-rollback.md @mindclade/release @mindclade/platform @mindclade/security
-/SECURITY.md @mindclade/security @mindclade/release
-/LICENSE @mindclade/release @mindclade/security
-/README.md @mindclade/release @mindclade/platform
-/component.yaml @mindclade/platform @mindclade/release
-/BUILD.bazel @mindclade/platform @mindclade/release
-/MODULE.bazel @mindclade/platform @mindclade/security
-/justfile @mindclade/platform @mindclade/release
+/.github/ @mindclade/platform-operations @mindclade/security
+/controllers/ @mindclade/platform-operations @mindclade/security
+/projects/ @mindclade/platform-operations @mindclade/security
+/platform/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/environments/development/ @mindclade/platform-operations @mindclade/release-engineering
+/environments/staging/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/environments/production/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/environments/restricted/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/policy/ @mindclade/platform-operations @mindclade/security
+/schemas/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/tooling/ @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/runbooks/ @mindclade/platform-operations @mindclade/security
+/runbooks/emergency-rollback.md @mindclade/platform-operations @mindclade/release-engineering @mindclade/security
+/SECURITY.md @mindclade/platform-operations @mindclade/security
+/LICENSE @mindclade/platform-operations @mindclade/security
+/README.md @mindclade/platform-operations @mindclade/release-engineering
+/component.yaml @mindclade/platform-operations @mindclade/security
+/BUILD.bazel @mindclade/platform-operations @mindclade/release-engineering
+/MODULE.bazel @mindclade/platform-operations @mindclade/security
+/justfile @mindclade/platform-operations @mindclade/release-engineering

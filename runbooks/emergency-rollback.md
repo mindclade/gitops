@@ -1,6 +1,6 @@
 # Emergency rollback
 
-Owner: `@mindclade/release`
+Owner: `@mindclade/platform-operations`
 Last reviewed: `2026-08-30`
 
 ## Preconditions
@@ -23,7 +23,7 @@ protected environment.
 
 ## Failure path
 
-If prior evidence is invalid, the environment is unbound, or connected
+If prior evidence is invalid, the environment is inactive, or connected
 governance is unavailable, stop. Use the independently authorized cluster
 recovery path to suspend service safely, then reconstruct every action in Git.
 

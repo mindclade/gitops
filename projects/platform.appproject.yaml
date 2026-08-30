@@ -31,7 +31,7 @@ spec:
   roles:
     - name: operator
       description: Explicit platform reconciliation role.
-      groups: [mindclade:platform]
+      groups: [mindclade:platform-operations]
       policies:
         - p, proj:platform:operator, applications, get, platform/*, allow
         - p, proj:platform:operator, applications, sync, platform/*, allow

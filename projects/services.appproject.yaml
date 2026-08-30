@@ -35,7 +35,7 @@ spec:
   roles:
     - name: promoter
       description: Reconcile reviewed service desired state.
-      groups: [mindclade:release]
+      groups: [mindclade:release-engineering]
       policies:
         - p, proj:services:promoter, applications, get, services/*, allow
         - p, proj:services:promoter, applications, sync, services/*, allow

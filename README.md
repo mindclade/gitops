@@ -1,9 +1,26 @@
 # Mindclade GitOps Control Plane
 
-This repository is the sole source of desired in-cluster state for Mindclade's
-Argo CD-managed environments. It consumes immutable infrastructure exports and
-signed release evidence; it does not build artifacts, provision Google Cloud
+This repository is the canonical target source for Mindclade's Argo CD-managed
+environment state. It consumes immutable infrastructure exports and signed
+release evidence; it does not build artifacts, provision Google Cloud
 resources, contain credentials, or grant CI direct cluster access.
+
+## Blueprint conformance status
+
+The tracked source matches the 126-file `gitops/` tree in
+`MINDCLADE_MONOREPO_BLUEPRINT_v3.4.0_OPTIMIZED.md` Appendix A3.13 exactly.
+That structural result is not implementation qualification. The A3.13
+production contract is currently **FAIL**: the repository is pre-production,
+`production_authority` is false, and every live path is fail-closed. Platform
+Operations owns this repository; Security co-owns its destination, source,
+signature, secret-reference, and admission controls.
+
+JIT-05 must ratify the GCP/GKE, deployment-package, policy, secret, and workload
+identity boundaries. JIT-09 must ratify release signing, qualification,
+promotion, rollback, revocation, and receipt signing. The repository cannot
+manufacture those decisions or their connected evidence locally. Wave 5
+production authority additionally requires non-production render, promotion,
+rollback, drift, failure, rebootstrap, and isolated-recovery qualification.
 
 ## Initial state
 
@@ -19,17 +36,18 @@ promotion workflow. Missing evidence is a denial, never a fallback.
 Activation is root-first. `cluster-set.yaml` and `infrastructure-exports.yaml`
 form an atomic environment-root pair and must activate together. Once that root
 is active, platform, service, worker, policy, and secret documents may be staged
-independently; activating any of them before the root is invalid. The initial
-source has no approved service or worker component Kustomization roots. A future
-reviewed activation change must add those roots before admitting workload
-releases.
+independently; activating any of them before the root is invalid. The current
+source has no approved service or worker package handoff. The ApplicationSets'
+component paths therefore remain dormant. Resolving that boundary requires
+JIT-05 ratification and a reviewed canonical-tree update; adding paths that are
+absent from Appendix A3.13 would be source drift.
 
 Platform packages, policy bindings, and secret references are contract-only in
-this source revision. Each has its own code-level `unbound` implementation
-marker, and validation rejects activation until a reviewed deployable platform
+this source revision. Each has an explicit `blocked-pending-jit-05` activation
+gate, and validation rejects activation until a reviewed deployable platform
 package, policy reconciler, or secret materializer replaces the corresponding
-marker. Root activation and the connected evidence verifier cannot implicitly
-activate any of these independent modules.
+gate. Root activation and evidence qualification cannot implicitly activate
+any of these independent modules.
 
 The generated environment ConfigMap's `gitops.mindclade.io/activation` label
 mirrors only that atomic cluster-set/infrastructure root state. It is not a
@@ -75,7 +93,8 @@ Source activation is blocked until all of the following exist and have been
 reviewed outside this repository:
 
 - protected GitHub environments named `<environment>-promotion`, with required
-  reviewer rules for the owning `release`, `platform`, and `security` teams;
+  reviewer rules for `release-engineering`, `platform-operations`, and
+  `security` as applicable to the release unit;
 - repository variable `CONNECTED_GOVERNANCE_READY=true`, set only after branch
   protection, required checks, merge-queue behavior, and environment rules are
   qualified;
@@ -94,11 +113,11 @@ reviewed outside this repository:
 Until then, AppProject destinations remain empty, all environment arrays remain
 inactive, and the ApplicationSets emit zero Applications.
 
-The initial source also contains a literal `unbound` evidence-verifier
-implementation marker. Both workflows exit before receipt creation, and source
-validation rejects every active environment, until a reviewed change adds
-actual cryptographic signature/attestation verification. Setting repository or
-environment variables alone cannot bypass this code-level activation blocker.
+The initial source carries a `blocked-pending-jit-09` evidence-verifier gate.
+Both protected workflows exit without creating completion evidence, and source
+validation rejects every active environment, until a reviewed change adds and
+qualifies actual cryptographic signature/attestation verification. Setting
+repository or environment variables alone cannot bypass this code-level gate.
 
 ## Local validation
 
@@ -151,17 +170,33 @@ preflight and must not be inferred from its result.
 
 ## Promotion contract
 
-Promotion and rollback run only after a fail-closed connected-governance
-preflight and the required reviewers on `<environment>-promotion`. Before the
-source-level verifier blocker, tooling proves the requested prior/current
-digest against the exact component, cluster, and release class in the
-checked-out environment record. A receipt separately binds the artifact source
-revision and immutable artifact reference from product CI to the checked-out
-GitOps revision (`GITHUB_SHA`), plus the attestation, protected-environment
-signer and issuer, fresh UTC issuance time, repository, workflow run and
-attempt, and requester. These two revisions are intentionally not conflated.
-The workflow retains the validated non-secret receipt for 90 days under an
-environment/run/attempt-specific artifact name. Desired-state release records
-reference the receipt and governance evidence by digest. Automation does not
-write desired state or contact a cluster; an approved source change remains a
-separate reviewed action.
+The current promotion and rollback workflows are pre-production gates, not
+operational promotion implementations. They validate immutable input grammar
+and the requested prior/current digest against the exact component, cluster,
+and release class in the checked-out environment record, then stop at JIT-09.
+They neither write desired state nor emit a promotion or rollback receipt.
+
+The `promotectl receipt` and `promotectl rollback` commands validate the current
+v1 receipt payload contract for source testing only. A blueprint-authoritative
+receipt must instead be produced after a protected desired-state commit merges,
+Argo reconciles it, and observed sync and health succeed; it must be signed and
+linked to that Git commit and the subject digests. Until JIT-09 defines and
+qualifies that signed envelope and the live observer, no command or workflow in
+this repository may label a pre-merge payload as completion evidence.
+
+## Tracked implementation blockers
+
+- [#1](https://github.com/mindclade/gitops/issues/1): authoritative signed
+  ReleaseManifest and evidence verification.
+- [#2](https://github.com/mindclade/gitops/issues/2): component-scoped workload
+  package handoff.
+- [#4](https://github.com/mindclade/gitops/issues/4): digest-bound deployable
+  platform packages.
+- [#5](https://github.com/mindclade/gitops/issues/5): policy and secret
+  materialization.
+- [#6](https://github.com/mindclade/gitops/issues/6): live drift, observed Argo
+  health, and durable signed evidence.
+- [#8](https://github.com/mindclade/gitops/issues/8): A3.8 thin, pinned reusable
+  workflow callers.
+- [#9](https://github.com/mindclade/gitops/issues/9): ReleaseManifest-bound,
+  stale-base-safe candidate promotion and rollback transitions.

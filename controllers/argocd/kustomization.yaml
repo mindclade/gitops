@@ -61,8 +61,8 @@ patches:
           p, role:platform-operator, applications, sync, platform/*, allow
           p, role:platform-operator, applications, action/*, platform/*, allow
           g, mindclade:security, role:security-auditor
-          g, mindclade:release, role:release-promoter
-          g, mindclade:platform, role:platform-operator
+          g, mindclade:release-engineering, role:release-promoter
+          g, mindclade:platform-operations, role:platform-operator
   - target:
       group: apps
       version: v1

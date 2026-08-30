@@ -43,21 +43,22 @@ var environmentSchemas = map[string]string{
 	"secret-references.yaml":      "secret_references.schema.json",
 }
 
-// The source intentionally carries no authoritative external evidence
-// verifier yet. Active desired state must remain impossible to qualify until a
-// reviewed cryptographic verifier replaces this blocker in code.
-const connectedEvidenceVerifierImplementation = "unbound"
+// JIT-09 must ratify the authoritative external evidence verifier before the
+// first promoted release. Active desired state remains impossible until that
+// gate is replaced by a qualified implementation.
+const connectedEvidenceVerifierGate = "blocked-pending-jit-09"
 
-// These source modules are contract-only until their independent reconcilers
-// are implemented. Keep their blockers separate from connected evidence so a
-// verifier implementation cannot accidentally make inert contracts active.
+// JIT-05 must ratify the deployment-package, policy-controller, and
+// secret-materialization boundaries before the Wave 5 infrastructure merge.
+// Keep those gates separate from JIT-09 so evidence qualification cannot
+// accidentally activate an inert deployment module.
 const (
-	platformDeploymentImplementation          = "unbound"
-	policyBindingReconcilerImplementation     = "unbound"
-	secretReferenceMaterializerImplementation = "unbound"
-	reviewedArgoVersion                       = "v3.5.2"
-	reviewedArgoRevision                      = "e258ee23c3e52266d407572f4bcdfe7d9ed36cb5"
-	reviewedArgoSHA256                        = "9a87f2b3e14c278f12501eb0ef5c3955b27cf05370ca425381c6a908cf85a5c5"
+	platformDeploymentGate          = "blocked-pending-jit-05"
+	policyBindingReconcilerGate     = "blocked-pending-jit-05"
+	secretReferenceMaterializerGate = "blocked-pending-jit-05"
+	reviewedArgoVersion             = "v3.5.2"
+	reviewedArgoRevision            = "e258ee23c3e52266d407572f4bcdfe7d9ed36cb5"
+	reviewedArgoSHA256              = "9a87f2b3e14c278f12501eb0ef5c3955b27cf05370ca425381c6a908cf85a5c5"
 )
 
 var bootstrapProvenanceKeys = []string{
@@ -81,8 +82,8 @@ var argoRBACPolicyLines = []string{
 	"p, role:platform-operator, applications, sync, platform/*, allow",
 	"p, role:platform-operator, applications, action/*, platform/*, allow",
 	"g, mindclade:security, role:security-auditor",
-	"g, mindclade:release, role:release-promoter",
-	"g, mindclade:platform, role:platform-operator",
+	"g, mindclade:release-engineering, role:release-promoter",
+	"g, mindclade:platform-operations, role:platform-operator",
 }
 
 var reviewedBootstrapImages = map[string]string{
@@ -93,10 +94,10 @@ var reviewedBootstrapImages = map[string]string{
 
 var reviewedAppProjectDigests = map[string]string{
 	"default":    "99f8a6f36b018af95922854d595d59d51d60e0732b042987e11009a4f5988aed",
-	"platform":   "ddd4d417a6dc48b041b4e1fe3a033bce3b422e1eb5953e1f03669ba65fa7b19d",
-	"restricted": "325676cf18996f3b05524a4f0f31b364f287e474d7617af23b3839144acf6787",
-	"services":   "c5a12a3ea6090f8cdbe0b8fb47b0e03ac832fb1d667090f8b97a9d2e37e0e17a",
-	"workers":    "6bc1642458e3ff44c053b386e501f4d4cb589ce5015f4d775f75832a74b667fd",
+	"platform":   "304b13d80420c1b945e39f60d50ba6426cef940edf78557f956da161c928db7a",
+	"restricted": "bb62f9cfed49eb58ab913827965e740f8c1420a7bca73ad6137f23c696d409d0",
+	"services":   "c4fc9149f32c073469066cd184b553d02cd340db2ea63865cd06c8543698db1c",
+	"workers":    "3b65f8001ae0408c134ece67c7bf83375fdf6dec3264c198af595fff3075f093",
 }
 
 func addPaths(target map[string]bool, prefix string, names ...string) {
@@ -184,13 +185,22 @@ type componentDocument struct {
 		Lifecycle           string   `yaml:"lifecycle"`
 		Maturity            string   `yaml:"maturity"`
 		Owner               string   `yaml:"owner"`
+		SecurityReviewers   []string `yaml:"security_reviewers"`
 		RepositoryClass     string   `yaml:"repository_class"`
 		DataClassification  string   `yaml:"data_classification"`
 		ProductionAuthority bool     `yaml:"production_authority"`
 		Dependencies        []string `yaml:"dependencies"`
 		Provides            []string `yaml:"provides"`
 		Consumers           []string `yaml:"consumers"`
-		Release             struct {
+		Activation          struct {
+			SourceReady struct {
+				Description string `yaml:"description"`
+			} `yaml:"source_ready"`
+			Connected struct {
+				Description string `yaml:"description"`
+			} `yaml:"connected"`
+		} `yaml:"activation"`
+		Release struct {
 			Strategy  string   `yaml:"strategy"`
 			Artifact  string   `yaml:"artifact"`
 			Immutable bool     `yaml:"immutable"`
@@ -271,13 +281,23 @@ func validateComponent(root string) error {
 		return fmt.Errorf("validate component.yaml: invalid component identity")
 	}
 	if strings.TrimSpace(component.Metadata.Description) == "" || component.Metadata.Description != strings.TrimSpace(component.Metadata.Description) ||
-		component.Metadata.Annotations["github.com/project-slug"] != "mindclade/gitops" {
+		component.Metadata.Annotations["github.com/project-slug"] != "mindclade/gitops" ||
+		component.Metadata.Annotations["mindclade.dev/security-owner"] != "security" ||
+		component.Metadata.Annotations["mindclade.dev/trust-tier"] != "deployment-control" ||
+		component.Metadata.Annotations["mindclade.dev/recovery-tier"] != "isolated-git" ||
+		component.Metadata.Annotations["mindclade.io/qualification-status"] != "FAIL" {
 		return fmt.Errorf("validate component.yaml: metadata contract is incomplete")
 	}
-	if component.Spec.Type != "deployment-control-plane" || component.Spec.Lifecycle != "production" || component.Spec.Maturity != "production" ||
-		component.Spec.Owner != "release" || component.Spec.RepositoryClass != "deployment-source" || component.Spec.DataClassification != "confidential" ||
-		!component.Spec.ProductionAuthority {
-		return fmt.Errorf("validate component.yaml: owner/maturity/authority contract is invalid")
+	if component.Spec.Type != "deployment-control-plane" || component.Spec.Lifecycle != "pre-production" || component.Spec.Maturity != "pre-production" ||
+		component.Spec.Owner != "platform-operations" || component.Spec.RepositoryClass != "deployment-source" || component.Spec.DataClassification != "confidential" ||
+		component.Spec.ProductionAuthority {
+		return fmt.Errorf("validate component.yaml: owner/qualification/authority contract is invalid")
+	}
+	if len(component.Spec.SecurityReviewers) != 1 || component.Spec.SecurityReviewers[0] != "security" {
+		return fmt.Errorf("validate component.yaml: security co-ownership contract is invalid")
+	}
+	if strings.TrimSpace(component.Spec.Activation.SourceReady.Description) == "" || strings.TrimSpace(component.Spec.Activation.Connected.Description) == "" {
+		return fmt.Errorf("validate component.yaml: activation boundary is incomplete")
 	}
 	if err := validateComponentReferences("dependency", component.Spec.Dependencies, true); err != nil {
 		return err
@@ -390,7 +410,7 @@ func ValidateRepository(root string) error {
 	if err := validateCrossEnvironmentClusters(root); err != nil {
 		return err
 	}
-	if err := validateUnboundModuleActivation(root); err != nil {
+	if err := validateDeferredModuleActivation(root); err != nil {
 		return err
 	}
 	if err := validateConnectedEvidenceActivation(root); err != nil {
@@ -987,29 +1007,29 @@ func validateCrossEnvironmentClusters(root string) error {
 	return nil
 }
 
-func validateUnboundModuleActivation(root string) error {
-	implementations := []struct {
-		filename       string
-		implementation string
-		description    string
+func validateDeferredModuleActivation(root string) error {
+	gates := []struct {
+		filename    string
+		gate        string
+		description string
 	}{
-		{filename: "platform-releases.yaml", implementation: platformDeploymentImplementation, description: "platform deployment implementation"},
-		{filename: "policy-bindings.yaml", implementation: policyBindingReconcilerImplementation, description: "policy binding reconciler implementation"},
-		{filename: "secret-references.yaml", implementation: secretReferenceMaterializerImplementation, description: "secret reference materializer implementation"},
+		{filename: "platform-releases.yaml", gate: platformDeploymentGate, description: "platform deployment boundary"},
+		{filename: "policy-bindings.yaml", gate: policyBindingReconcilerGate, description: "policy binding reconciliation boundary"},
+		{filename: "secret-references.yaml", gate: secretReferenceMaterializerGate, description: "secret reference materialization boundary"},
 	}
-	for _, implementation := range implementations {
-		if implementation.implementation != "unbound" {
-			return fmt.Errorf("unknown %s %q", implementation.description, implementation.implementation)
+	for _, gate := range gates {
+		if gate.gate != "blocked-pending-jit-05" {
+			return fmt.Errorf("unknown %s activation gate %q", gate.description, gate.gate)
 		}
 	}
 	for _, environment := range release.Environments {
-		for _, implementation := range implementations {
-			document, err := release.ReadObject(filepath.Join(root, "environments", environment, implementation.filename))
+		for _, gate := range gates {
+			document, err := release.ReadObject(filepath.Join(root, "environments", environment, gate.filename))
 			if err != nil {
 				return err
 			}
 			if active, _ := document["active"].(bool); active {
-				return fmt.Errorf("%s %s activation is blocked: the %s is unbound", environment, implementation.filename, implementation.description)
+				return fmt.Errorf("%s %s activation is blocked: the %s is pending JIT-05 ratification and qualification", environment, gate.filename, gate.description)
 			}
 		}
 	}
@@ -1017,8 +1037,8 @@ func validateUnboundModuleActivation(root string) error {
 }
 
 func validateConnectedEvidenceActivation(root string) error {
-	if connectedEvidenceVerifierImplementation != "unbound" {
-		return fmt.Errorf("unknown connected evidence verifier implementation %q", connectedEvidenceVerifierImplementation)
+	if connectedEvidenceVerifierGate != "blocked-pending-jit-09" {
+		return fmt.Errorf("unknown connected evidence verifier activation gate %q", connectedEvidenceVerifierGate)
 	}
 	for _, environment := range release.Environments {
 		document, err := release.ReadObject(filepath.Join(root, "environments", environment, "cluster-set.yaml"))
@@ -1026,7 +1046,7 @@ func validateConnectedEvidenceActivation(root string) error {
 			return err
 		}
 		if active, _ := document["active"].(bool); active {
-			return fmt.Errorf("%s activation is blocked: the external signature and attestation verifier implementation is unbound", environment)
+			return fmt.Errorf("%s activation is blocked: external signature and attestation verification is pending JIT-09 ratification and qualification", environment)
 		}
 	}
 	return nil
@@ -1319,20 +1339,20 @@ func validateArgoRBACConfig(document map[string]any) error {
 	return nil
 }
 
-func validateUnboundAppProject(document map[string]any, expectedName string) error {
+func validateInactiveAppProject(document map[string]any, expectedName string) error {
 	metadata, ok := document["metadata"].(map[string]any)
 	if document["apiVersion"] != "argoproj.io/v1alpha1" || document["kind"] != "AppProject" || !ok || metadata["name"] != expectedName || metadata["namespace"] != "argocd" {
-		return fmt.Errorf("unbound project %s identity must remain canonical", expectedName)
+		return fmt.Errorf("inactive project %s identity must remain canonical", expectedName)
 	}
 	spec, ok := document["spec"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("unbound project %s spec must be an object", expectedName)
+		return fmt.Errorf("inactive project %s spec must be an object", expectedName)
 	}
 	destinations, ok := spec["destinations"].([]any)
 	if !ok || len(destinations) != 0 {
-		return fmt.Errorf("unbound project %s must have no destinations", expectedName)
+		return fmt.Errorf("inactive project %s must have no destinations", expectedName)
 	}
-	if err := requireExactStringArray(spec["sourceRepos"], "unbound project "+expectedName+" sourceRepos", "https://github.com/mindclade/gitops.git"); err != nil {
+	if err := requireExactStringArray(spec["sourceRepos"], "inactive project "+expectedName+" sourceRepos", "https://github.com/mindclade/gitops.git"); err != nil {
 		return err
 	}
 	return validateReviewedAppProject(document, expectedName)
@@ -1463,7 +1483,7 @@ func ValidateArgoRender(path string) error {
 	imageCount := 0
 	coreConfigSeen := false
 	rbacConfigSeen := false
-	unboundProjects := map[string]bool{}
+	inactiveProjects := map[string]bool{}
 	for _, document := range documents {
 		kind := fmt.Sprint(document["kind"])
 		counts[kind]++
@@ -1495,16 +1515,16 @@ func ValidateArgoRender(path string) error {
 				if err := validateDefaultAppProject(document); err != nil {
 					return err
 				}
-				unboundProjects["default"] = true
+				inactiveProjects["default"] = true
 			}
 			for _, project := range []string{"platform", "services", "workers", "restricted"} {
 				if name != project {
 					continue
 				}
-				if err := validateUnboundAppProject(document, project); err != nil {
+				if err := validateInactiveAppProject(document, project); err != nil {
 					return err
 				}
-				unboundProjects[project] = true
+				inactiveProjects[project] = true
 			}
 		}
 	}
@@ -1518,8 +1538,8 @@ func ValidateArgoRender(path string) error {
 		return fmt.Errorf("bootstrap render lacks the semantically validated Argo CD core or RBAC ConfigMap")
 	}
 	for _, project := range []string{"default", "platform", "services", "workers", "restricted"} {
-		if !unboundProjects[project] {
-			return fmt.Errorf("bootstrap render lacks semantically validated unbound project %s", project)
+		if !inactiveProjects[project] {
+			return fmt.Errorf("bootstrap render lacks semantically validated inactive project %s", project)
 		}
 	}
 	return nil
@@ -2160,7 +2180,7 @@ func validateFailClosedSources(root string) error {
 			name := fmt.Sprint(metadata["name"])
 			switch name {
 			case project:
-				if err := validateUnboundAppProject(document, project); err != nil {
+				if err := validateInactiveAppProject(document, project); err != nil {
 					return err
 				}
 				projectCount++
@@ -2177,7 +2197,7 @@ func validateFailClosedSources(root string) error {
 			}
 		}
 		if projectCount != 1 {
-			return fmt.Errorf("%s must contain exactly one unbound project %s", filepath.ToSlash(relative), project)
+			return fmt.Errorf("%s must contain exactly one inactive project %s", filepath.ToSlash(relative), project)
 		}
 		expectedDefaultCount := 0
 		if project == "restricted" {
@@ -2193,9 +2213,14 @@ func validateFailClosedSources(root string) error {
 			return err
 		}
 		text := string(content)
-		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_IMPLEMENTATION: unbound`, `!= verified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "--checked-out-revision", "--workflow-run-id", "retention-days: 90", `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]`, `if [[ "$RELEASE_CLASS" = platform ]]`, `[[ "$ARTIFACT_REFERENCE" != oci://* ]]`} {
+		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09`, `!= qualified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", `[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]`, `if [[ "$RELEASE_CLASS" = platform ]]`, `[[ "$ARTIFACT_REFERENCE" != oci://* ]]`} {
 			if !strings.Contains(text, invariant) {
 				return fmt.Errorf("%s lacks connected-governance preflight %q", workflow, invariant)
+			}
+		}
+		for _, forbidden := range []string{"promotectl receipt", "promotectl rollback", "upload-artifact@", "promotion-receipt.json", "rollback-receipt.json"} {
+			if strings.Contains(text, forbidden) {
+				return fmt.Errorf("%s emits pre-merge completion evidence %q", workflow, forbidden)
 			}
 		}
 		if strings.Contains(text, "signer:\n        description:") || strings.Contains(text, "issued_at:\n        description:") {

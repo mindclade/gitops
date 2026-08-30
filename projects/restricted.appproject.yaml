@@ -48,7 +48,7 @@ spec:
     warn: true
   roles:
     - name: observer
-      groups: [mindclade:release, mindclade:platform, mindclade:security]
+      groups: [mindclade:release-engineering, mindclade:platform-operations, mindclade:security]
       policies:
         - p, proj:restricted:observer, applications, get, restricted/*, allow
   syncWindows:

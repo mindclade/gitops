@@ -2,17 +2,23 @@ apiVersion: mindclade.io/v1alpha1
 kind: Component
 metadata:
   name: gitops
-  description: Fail-closed Argo CD desired-state and digest-promotion authority.
+  description: Pre-production Argo CD desired-state and digest-promotion control plane.
   annotations:
     github.com/project-slug: mindclade/gitops
+    mindclade.dev/security-owner: security
+    mindclade.dev/trust-tier: deployment-control
+    mindclade.dev/recovery-tier: isolated-git
+    mindclade.io/qualification-status: FAIL
 spec:
   type: deployment-control-plane
-  lifecycle: production
-  maturity: production
-  owner: release
+  lifecycle: pre-production
+  maturity: pre-production
+  owner: platform-operations
+  security_reviewers:
+    - security
   repository_class: deployment-source
   data_classification: confidential
-  production_authority: true
+  production_authority: false
   dependencies:
     - component:infrastructure-live
     - component:mindclade
@@ -22,6 +28,11 @@ spec:
     - rollback-evidence-v1
   consumers:
     - component:argocd
+  activation:
+    source_ready:
+      description: A3.13 source, policy, failure, drift, and recovery contracts are complete and pass at one qualified commit.
+    connected:
+      description: JIT-05 and JIT-09 are ratified and non-production render, promotion, rollback, drift, and isolated recovery evidence is verified.
   release:
     strategy: protected-digest-promotion
     artifact: source-commit

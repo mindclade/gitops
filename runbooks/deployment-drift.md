@@ -1,6 +1,6 @@
 # Deployment drift
 
-Owner: `@mindclade/platform`
+Owner: `@mindclade/platform-operations`
 Last reviewed: `2026-08-30`
 
 ## Scope

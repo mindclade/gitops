@@ -17,7 +17,7 @@ deny contains sprintf("destination %s/%s is not explicitly allowed", [object.get
   not destination in object.get(input, "allowedDestinations", [])
 }
 
-deny contains "unbound projects must have no destinations" if {
+deny contains "inactive projects must have no destinations" if {
   input.bound == false
   count(input.destinations) != 0
 }
