@@ -352,7 +352,7 @@ func validateComponent(root string) error {
 		return fmt.Errorf("validate component.yaml: metadata contract is incomplete")
 	}
 	if component.Spec.Type != "deployment-control-plane" || component.Spec.Lifecycle != "pre-production" || component.Spec.Maturity != "pre-production" ||
-		component.Spec.Owner != "platform-operations" || component.Spec.RepositoryClass != "deployment-source" || component.Spec.DataClassification != "confidential" ||
+		component.Spec.Owner != "platform-operations" || component.Spec.RepositoryClass != "deployment-source" || component.Spec.DataClassification != "public" ||
 		component.Spec.ProductionAuthority {
 		return fmt.Errorf("validate component.yaml: owner/qualification/authority contract is invalid")
 	}

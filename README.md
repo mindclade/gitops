@@ -8,7 +8,7 @@ resources, contain credentials, or grant CI direct cluster access.
 ## Blueprint conformance status
 
 The tracked source matches the 128-file `gitops/` tree in
-`MINDCLADE_MONOREPO_BLUEPRINT_v3.4.0_OPTIMIZED.md` Appendix A3.13 exactly.
+`MINDCLADE_MONOREPO_BLUEPRINT_v3.4.3_OPTIMIZED.md` Appendix A3.13 exactly.
 That structural result is not implementation qualification. The A3.13
 production contract is currently **FAIL**: the repository is pre-production,
 `production_authority` is false, and every live path is fail-closed. Platform
