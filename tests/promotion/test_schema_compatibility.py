@@ -936,7 +936,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "wrong-owner": lambda text: text.replace("  owner: platform-operations", "  owner: release-engineering"),
             "wrong-maturity": lambda text: text.replace("  maturity: pre-production", "  maturity: production"),
             "wrong-repository-class": lambda text: text.replace("  repository_class: deployment-source", "  repository_class: product-source"),
-            "wrong-data-classification": lambda text: text.replace("  data_classification: confidential", "  data_classification: public"),
+            "wrong-data-classification": lambda text: text.replace("  data_classification: public", "  data_classification: confidential"),
             "premature-production-authority": lambda text: text.replace("  production_authority: false", "  production_authority: true"),
             "wrong-trust-tier": lambda text: text.replace("mindclade.dev/trust-tier: deployment-control", "mindclade.dev/trust-tier: application"),
             "wrong-recovery-tier": lambda text: text.replace("mindclade.dev/recovery-tier: isolated-git", "mindclade.dev/recovery-tier: none"),

@@ -491,7 +491,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             "  security_reviewers:",
             "    - security",
             "  repository_class: deployment-source",
-            "  data_classification: confidential",
+            "  data_classification: public",
             "  production_authority: false",
             "    strategy: protected-digest-promotion",
             "    artifact: source-commit",

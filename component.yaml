@@ -17,7 +17,7 @@ spec:
   security_reviewers:
     - security
   repository_class: deployment-source
-  data_classification: confidential
+  data_classification: public
   production_authority: false
   dependencies:
     - component:infrastructure-live
