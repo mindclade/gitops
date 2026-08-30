@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: workers
+  namespace: argocd
+  labels:
+    gitops.mindclade.io/authority: workers
+spec:
+  description: Namespace-scoped execution workers admitted by immutable release evidence.
+  sourceRepos:
+    - https://github.com/mindclade/gitops.git
+  destinations: []
+  clusterResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: ServiceAccount
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: apps
+      kind: Deployment
+    - group: kueue.x-k8s.io
+      kind: LocalQueue
+    - group: jobset.x-k8s.io
+      kind: JobSet
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true
+  roles:
+    - name: promoter
+      groups: [mindclade:release]
+      policies:
+        - p, proj:workers:promoter, applications, get, workers/*, allow
+        - p, proj:workers:promoter, applications, sync, workers/*, allow
+    - name: operator
+      groups: [mindclade:platform]
+      policies:
+        - p, proj:workers:operator, applications, get, workers/*, allow

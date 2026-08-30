@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  labels:
+    gitops.mindclade.io/authority: platform
+spec:
+  description: Allowlisted platform controllers and environment-root metadata.
+  sourceRepos:
+    - https://github.com/mindclade/gitops.git
+  destinations: []
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+  orphanedResources:
+    warn: true
+  roles:
+    - name: operator
+      description: Explicit platform reconciliation role.
+      groups: [mindclade:platform]
+      policies:
+        - p, proj:platform:operator, applications, get, platform/*, allow
+        - p, proj:platform:operator, applications, sync, platform/*, allow
+    - name: auditor
+      description: Read-only security evidence role.
+      groups: [mindclade:security]
+      policies:
+        - p, proj:platform:auditor, applications, get, platform/*, allow

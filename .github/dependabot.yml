@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, github-actions]
+    reviewers:
+      - mindclade/platform
+      - mindclade/security
+  - package-ecosystem: gomod
+    directory: /tooling
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, go]
+    reviewers:
+      - mindclade/platform
+      - mindclade/security
+  - package-ecosystem: bazel
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, bazel]
+    reviewers:
+      - mindclade/platform
+      - mindclade/security

@@ -1,0 +1,11 @@
+installCRDs: true
+replicaCount: 2
+webhook:
+  replicaCount: 2
+  certCheckInterval: 5m
+certController:
+  replicaCount: 2
+serviceAccount:
+  create: true
+  annotations: {}
+scopedNamespace: ""

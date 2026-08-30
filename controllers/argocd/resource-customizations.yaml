@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  admin.enabled: "false"
+  users.anonymous.enabled: "false"
+  exec.enabled: "false"
+  statusbadge.enabled: "false"
+  application.resourceTrackingMethod: annotation+label
+  resource.respectRBAC: strict
+  dex.config: |
+    connectors:
+      - type: github
+        id: github
+        name: Mindclade GitHub
+        config:
+          clientID: $dex.github.clientID
+          clientSecret: $dex.github.clientSecret
+          orgs:
+            - name: mindclade
+              teams:
+                - platform
+                - release
+                - security
+  resource.customizations.ignoreDifferences.all: |
+    jqPathExpressions:
+      - .metadata.managedFields

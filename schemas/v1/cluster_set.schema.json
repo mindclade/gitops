@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindclade.io/schemas/gitops/v1/cluster_set.schema.json",
+  "title": "Mindclade cluster set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "environment", "active", "clusters"],
+  "properties": {
+    "schemaVersion": {"const": "v1"},
+    "environment": {"enum": ["development", "staging", "production", "restricted"]},
+    "active": {"type": "boolean"},
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "server", "desiredStateRevision", "activationRecordDigest", "labels"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
+          "server": {"type": "string", "maxLength": 2048, "pattern": "^https://[^/?#@\\s]+/?$"},
+          "desiredStateRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "activationRecordDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "labels": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "required": ["gitops.mindclade.io/active", "gitops.mindclade.io/environment"]
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"clusters": {"minItems": 1}}}},
+    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"clusters": {"maxItems": 0}}}}
+  ]
+}

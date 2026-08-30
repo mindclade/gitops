@@ -1,0 +1,24 @@
+# Bazel convenience links and local caches.
+/bazel-*
+/.cache/
+
+# Local test and language output.
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/tooling/promotectl
+
+# Rendered or downloaded material is evidence, not source.
+/rendered/
+/dist/
+*.tmp
+
+# Credentials and sensitive cluster material are never repository content.
+*.kubeconfig
+*.pem
+*.key
+*.p12
+*.token
+.env
+.env.*
+!.env.example

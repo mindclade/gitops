@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: environment-root
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: [missingkey=error]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/mindclade/gitops.git
+              revision: main
+              files:
+                - path: environments/*/cluster-set.yaml
+          - list:
+              elementsYaml: '{{ if .active }}{{ .clusters | toJson }}{{ else }}[]{{ end }}'
+  template:
+    metadata:
+      name: '{{.name}}-environment-root'
+      labels:
+        gitops.mindclade.io/environment: '{{.environment}}'
+      annotations:
+        gitops.mindclade.io/activation-record-digest: '{{.activationRecordDigest}}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/mindclade/gitops.git
+        targetRevision: '{{.desiredStateRevision}}'
+        path: 'environments/{{.environment}}'
+        kustomize:
+          namePrefix: environment-root-
+      destination:
+        name: '{{.name}}'
+        namespace: argocd
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=false
+          - ApplyOutOfSyncOnly=true
+          - RespectIgnoreDifferences=true
+  syncPolicy:
+    applicationsSync: create-update
+    preserveResourcesOnDeletion: true

@@ -1,0 +1,11 @@
+controllerManager:
+  replicas: 2
+  manager:
+    featureGates:
+      TopologyAwareScheduling: true
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+webhook:
+  failurePolicy: Fail
+  timeoutSeconds: 5

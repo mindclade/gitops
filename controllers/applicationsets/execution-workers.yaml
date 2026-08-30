@@ -1,0 +1,47 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: execution-workers
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: [missingkey=error]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/mindclade/gitops.git
+              revision: main
+              files:
+                - path: environments/*/worker-releases.yaml
+          - list:
+              elementsYaml: '{{ if .active }}{{ .releases | toJson }}{{ else }}[]{{ end }}'
+  template:
+    metadata:
+      name: '{{.cluster}}-{{.component}}'
+      labels:
+        gitops.mindclade.io/environment: '{{.environment}}'
+        gitops.mindclade.io/release-class: workers
+      annotations:
+        gitops.mindclade.io/release-record-digest: '{{.releaseRecordDigest}}'
+        gitops.mindclade.io/promotion-receipt-digest: '{{.promotionReceiptDigest}}'
+        gitops.mindclade.io/governance-evidence-digest: '{{.governanceEvidenceDigest}}'
+    spec:
+      project: workers
+      source:
+        repoURL: https://github.com/mindclade/gitops.git
+        targetRevision: '{{.desiredStateRevision}}'
+        path: 'environments/{{.environment}}'
+        kustomize:
+          namePrefix: workers-
+      destination:
+        name: '{{.cluster}}'
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=false
+          - ApplyOutOfSyncOnly=true
+          - RespectIgnoreDifferences=true
+  syncPolicy:
+    applicationsSync: create-update
+    preserveResourcesOnDeletion: true

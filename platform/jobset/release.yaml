@@ -1,0 +1,13 @@
+apiVersion: gitops.mindclade.io/v1
+kind: PlatformRelease
+metadata:
+  name: jobset
+spec:
+  active: false
+  destinationNamespace: jobset-system
+  artifact: null
+  requiredEvidence: [artifact-digest, signature, sbom, provenance, vulnerability-scan, promotion-receipt, governance-evidence]
+  rollout:
+    strategy: manual
+    prune: false
+    rollbackDigestRequired: true

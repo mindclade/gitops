@@ -1,0 +1,73 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+package(default_visibility = ["//visibility:private"])
+
+exports_files([
+    "README.md",
+    "SECURITY.md",
+    "component.yaml",
+])
+
+filegroup(
+    name = "desired_state",
+    srcs = glob([
+        "controllers/**/*.yaml",
+        "environments/**/*.yaml",
+        "platform/**/*.yaml",
+        "projects/**/*.yaml",
+        "schemas/**/*.json",
+    ]),
+)
+
+filegroup(
+    name = "rego_policy",
+    srcs = glob(["policy/**/*.rego"]),
+)
+
+filegroup(
+    name = "workflow_contracts",
+    srcs = glob([".github/workflows/*.yml"]),
+)
+
+_PYTHON_TESTS = {
+    "development_render_test": "tests/render/test_development_render.py",
+    "staging_render_test": "tests/render/test_staging_render.py",
+    "production_render_test": "tests/render/test_production_render.py",
+    "restricted_render_test": "tests/render/test_restricted_render.py",
+    "evidence_chain_test": "tests/promotion/test_evidence_chain.py",
+    "schema_compatibility_test": "tests/promotion/test_schema_compatibility.py",
+    "partial_sync_test": "tests/failure/test_partial_sync.py",
+    "previous_digest_test": "tests/rollback/test_previous_digest.py",
+    "live_object_diff_test": "tests/drift/test_live_object_diff.py",
+}
+
+_PROMOTECTL_TESTS = ["evidence_chain_test", "schema_compatibility_test"]
+
+[
+    py_test(
+        name = name,
+        srcs = [src],
+        data = [
+            ":desired_state",
+            ":rego_policy",
+            ":workflow_contracts",
+            "//tooling:test_contract_sources",
+        ] + (["//tooling:promotectl"] if name in _PROMOTECTL_TESTS else []),
+        env = {"PROMOTECTL_RUNFILE": "$(rootpath //tooling:promotectl)"} if name in _PROMOTECTL_TESTS else {},
+        legacy_create_init = 0,
+        main = src,
+        python_version = "PY3",
+    )
+    for name, src in _PYTHON_TESTS.items()
+]
+
+test_suite(
+    name = "source_tests",
+    tests = [":" + name for name in _PYTHON_TESTS],
+)
+
+alias(
+    name = "promotectl",
+    actual = "//tooling:promotectl",
+    visibility = ["//visibility:public"],
+)

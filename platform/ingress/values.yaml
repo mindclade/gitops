@@ -1,0 +1,13 @@
+controller:
+  replicaCount: 2
+  allowSnippetAnnotations: false
+  config:
+    allow-cross-namespace-resources: "false"
+    enable-access-log: "true"
+  service:
+    external:
+      enabled: false
+    internal:
+      enabled: true
+  admissionWebhooks:
+    failurePolicy: Fail

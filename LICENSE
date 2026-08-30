@@ -1,0 +1,89 @@
+Mindclade Proprietary Software Terms
+
+Document-Control: mindclade-license@2
+Document version: 1.1
+Effective date: August 21, 2026
+Classification: Mindclade Proprietary and Confidential
+
+Copyright © 2026 Mindclade, LLC. All Rights Reserved.
+
+SPDX-License-Identifier: LicenseRef-Mindclade-Proprietary
+
+These terms apply to Mindclade, LLC.'s first-party software, source code,
+documentation, interfaces, schemas, configuration, build and deployment
+materials, and other authored content in this repository (the "Materials").
+They do not replace separate terms governing third-party components, datasets,
+model weights, or independently licensed materials.
+
+1. Authorization and controlling agreements
+
+Access to the Materials does not grant a license. You may possess, use, copy,
+modify, execute, test, distribute, disclose, or create derivative works only as
+expressly authorized by a controlling written agreement with Mindclade, LLC.
+That agreement controls if it conflicts with these terms. If you are not
+authorized, do not access or use the Materials and notify the provider.
+
+2. Ownership and reservation of rights
+
+Subject to third-party rights, Mindclade, LLC. retains all right, title, and
+interest in the Materials, including copyright, patent, trade-secret,
+trademark, and other intellectual-property rights. All rights not expressly
+granted in a controlling written agreement are reserved.
+
+3. Confidentiality and safeguards
+
+Where a duty of confidentiality applies, use the Materials only for the
+authorized Mindclade purpose; restrict access to authorized people with a need
+to know; apply reasonable administrative, technical, and physical safeguards;
+do not disclose them without prior written authorization; and promptly report
+suspected loss, misuse, or unauthorized access through an approved private
+channel. Return or securely destroy Materials when authorization ends, except
+where law or a controlling agreement requires retention.
+
+4. Public and third-party materials
+
+Information does not become confidential merely because this notice appears on
+a copy. Material Mindclade has lawfully made public is not subject to the
+confidentiality obligations above. Third-party materials remain governed by
+their own licenses, notices, acceptable-use terms, and restrictions.
+
+5. Trademarks and publicity
+
+No right to use Mindclade names, logos, marks, trade dress, publicity, or
+endorsement is granted. Authorized internal use must follow current brand rules
+and the controlling agreement.
+
+6. Protected disclosures
+
+Nothing prohibits a disclosure protected by applicable law, including a
+confidential report of suspected legal violations to a government authority or
+legal counsel. Under 18 U.S.C. § 1833(b), an individual is not liable under
+federal or state trade-secret law for a qualifying confidential disclosure to
+a government official or attorney made solely to report or investigate a
+suspected violation of law, or for a disclosure in a document filed under seal.
+
+7. Termination and remedies
+
+Authorization ends when the controlling agreement ends or access is lawfully
+revoked. Ownership, confidentiality, third-party rights, protected disclosure,
+remedy, and disclaimer provisions survive as their nature requires.
+Unauthorized use or disclosure may cause irreparable harm; Mindclade may seek
+injunctive relief and any other available remedy, subject to applicable law.
+
+8. No waiver and severability
+
+Failure to enforce a right is not a waiver. An unenforceable provision is
+enforced to the maximum extent permitted, and the remaining provisions remain
+effective.
+
+9. Disclaimer
+
+EXCEPT AS EXPRESSLY PROVIDED IN A CONTROLLING WRITTEN AGREEMENT, THE MATERIALS
+ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND,
+EXPRESS, IMPLIED, OR STATUTORY, INCLUDING MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT, TO THE MAXIMUM EXTENT
+PERMITTED BY LAW.
+
+Questions about authorization or rights must use the legal or contract channel
+identified in the controlling agreement. Do not place confidential Materials
+in an unapproved email or public issue.

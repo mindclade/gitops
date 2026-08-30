@@ -1,0 +1,18 @@
+mode: deployment
+replicaCount: 2
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 75
+    batch: {}
+  exporters: {}
+  service:
+    pipelines: {}
+serviceMonitor:
+  enabled: true

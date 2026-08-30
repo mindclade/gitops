@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindclade.io/schemas/gitops/v1/policy_bindings.schema.json",
+  "title": "Environment policy bindings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "environment", "active", "bindings"],
+  "properties": {
+    "schemaVersion": {"const": "v1"},
+    "environment": {"enum": ["development", "staging", "production", "restricted"]},
+    "active": {"type": "boolean"},
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "policyDigest", "enforcement", "namespaces"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
+          "policyDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "enforcement": {"enum": ["deny", "dryrun"]},
+          "namespaces": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"}}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"bindings": {"minItems": 1}}}},
+    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"bindings": {"maxItems": 0}}}}
+  ]
+}

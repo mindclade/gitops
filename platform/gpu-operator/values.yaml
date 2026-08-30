@@ -1,0 +1,12 @@
+driver:
+  enabled: false
+toolkit:
+  enabled: false
+operator:
+  defaultRuntime: containerd
+  use_ocp_driver_toolkit: false
+migManager:
+  enabled: false
+validator:
+  plugin:
+    env: []

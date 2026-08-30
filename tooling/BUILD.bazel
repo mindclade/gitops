@@ -1,0 +1,71 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+package(default_visibility = ["//visibility:private"])
+
+filegroup(
+    name = "test_contract_sources",
+    srcs = [
+        "go.mod",
+        "internal/evidence/receipt.go",
+    ],
+    visibility = ["//:__pkg__"],
+)
+
+go_library(
+    name = "release",
+    srcs = ["internal/release/verification.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/release",
+)
+
+go_library(
+    name = "rendering",
+    srcs = ["internal/rendering/rendering.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/rendering",
+    deps = [":release"],
+)
+
+go_library(
+    name = "evidence",
+    srcs = ["internal/evidence/receipt.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/evidence",
+    deps = [":release"],
+)
+
+go_library(
+    name = "policy",
+    srcs = ["internal/policy/policy.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/policy",
+    deps = [
+        ":release",
+        "@com_github_santhosh_tekuri_jsonschema_v5//:jsonschema",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_library(
+    name = "promotion",
+    srcs = ["internal/promotion/promotion.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/promotion",
+    deps = [":evidence"],
+)
+
+go_library(
+    name = "rollback",
+    srcs = ["internal/rollback/rollback.go"],
+    importpath = "github.com/mindclade/gitops/tooling/internal/rollback",
+    deps = [":evidence"],
+)
+
+go_binary(
+    name = "promotectl",
+    srcs = ["cmd/promotectl/main.go"],
+    importpath = "github.com/mindclade/gitops/tooling/cmd/promotectl",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":policy",
+        ":promotion",
+        ":release",
+        ":rendering",
+        ":rollback",
+    ],
+)

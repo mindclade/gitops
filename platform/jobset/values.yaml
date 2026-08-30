@@ -1,0 +1,10 @@
+controllerManager:
+  replicas: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+webhook:
+  failurePolicy: Fail
+  timeoutSeconds: 5
+metrics:
+  enabled: true

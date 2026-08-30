@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generatorOptions:
+  labels:
+    gitops.mindclade.io/environment: restricted
+    gitops.mindclade.io/activation: inactive
+configMapGenerator:
+  - name: restricted-gitops-contracts
+    files:
+      - cluster-set.yaml
+      - infrastructure-exports.yaml
+      - platform-releases.yaml
+      - service-releases.yaml
+      - worker-releases.yaml
+      - policy-bindings.yaml
+      - secret-references.yaml

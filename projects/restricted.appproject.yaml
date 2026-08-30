@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+  labels:
+    gitops.mindclade.io/authority: deny-all
+spec:
+  description: Fail-closed default project; no source, destination, or resource is admitted.
+  sourceRepos: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: restricted
+  namespace: argocd
+  labels:
+    gitops.mindclade.io/authority: restricted
+spec:
+  description: Fail-closed restricted workloads; human roles are observation-only.
+  sourceRepos:
+    - https://github.com/mindclade/gitops.git
+  destinations: []
+  clusterResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true
+  roles:
+    - name: observer
+      groups: [mindclade:release, mindclade:platform, mindclade:security]
+      policies:
+        - p, proj:restricted:observer, applications, get, restricted/*, allow
+  syncWindows:
+    - kind: deny
+      schedule: "0 0 * * *"
+      duration: 24h
+      applications: ["*"]
+      manualSync: false
+      timeZone: UTC

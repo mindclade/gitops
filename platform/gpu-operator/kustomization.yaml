@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gpu-operator
+generatorOptions:
+  labels:
+    app.kubernetes.io/part-of: mindclade-platform
+    gitops.mindclade.io/activation: inactive
+configMapGenerator:
+  - name: gpu-operator-release-contract
+    files: [release.yaml, values.yaml]

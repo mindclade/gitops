@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindclade.io/schemas/gitops/v1/infrastructure_exports.schema.json",
+  "title": "Immutable infrastructure exports",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "environment", "active", "exports"],
+  "properties": {
+    "schemaVersion": {"const": "v1"},
+    "environment": {"enum": ["development", "staging", "production", "restricted"]},
+    "active": {"type": "boolean"},
+    "exports": {
+      "type": "array",
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/infrastructureExport"}
+    }
+  },
+  "$defs": {
+    "infrastructureExport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
+        "kind": {"const": "InfrastructureExport"},
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["environment", "stack", "sourceRepository", "sourceCommit", "root", "planDigest", "schemaDigest", "generatedAt"],
+          "properties": {
+            "environment": {"enum": ["development", "staging", "production", "restricted"]},
+            "stack": {"enum": ["foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability"]},
+            "sourceRepository": {"const": "mindclade/infrastructure-live"},
+            "sourceCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "root": {"type": "string", "pattern": "^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$"},
+            "planDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "schemaDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "generatedAt": {"type": "string", "format": "date-time"}
+          }
+        },
+        "spec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resources", "evidence"],
+          "properties": {
+            "resources": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "name", "uri"],
+                "properties": {
+                  "kind": {"enum": ["project", "network", "subnetwork", "private-dns-zone", "artifact-registry", "artifact-bucket", "database-instance", "topic", "kms-key-reference", "cluster-membership", "workload-identity-pool", "build-execution-pool", "log-bucket", "metrics-scope", "argocd-prerequisite"]},
+                  "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,126}$"},
+                  "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(https:)?//[^/?#@\\s]+/[^?#\\s]+$"}
+                }
+              }
+            },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["signature", "provenance"],
+              "properties": {
+                "signature": {"$ref": "#/$defs/evidenceReference"},
+                "provenance": {"$ref": "#/$defs/evidenceReference"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "digest"],
+      "properties": {
+        "uri": {"type": "string", "maxLength": 2048, "pattern": "^https://[^/?#@\\s]+/[^?#\\s]+$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"exports": {"minItems": 1}}}},
+    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"exports": {"maxItems": 0}}}}
+  ]
+}

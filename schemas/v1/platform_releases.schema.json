@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindclade.io/schemas/gitops/v1/platform_releases.schema.json",
+  "title": "Platform release set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "environment", "active", "releases"],
+  "properties": {
+    "schemaVersion": {"const": "v1"},
+    "environment": {"enum": ["development", "staging", "production", "restricted"]},
+    "active": {"type": "boolean"},
+    "releases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "cluster", "namespace", "artifact", "digest", "sourceRevision", "desiredStateRevision", "releaseRecordDigest", "promotionReceiptDigest", "governanceEvidenceDigest", "evidence", "priorDigest"],
+        "properties": {
+          "component": {"enum": ["kueue", "jobset", "otel-collector", "external-secrets", "policy-controller", "gpu-operator", "ingress"]},
+          "cluster": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,62}$"},
+          "namespace": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"},
+          "artifact": {"type": "string", "pattern": "^oci://\\S+@sha256:[0-9a-f]{64}$"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "priorDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "sourceRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "desiredStateRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "releaseRecordDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "promotionReceiptDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "governanceEvidenceDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "evidence": {"$ref": "#/$defs/evidence"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signature", "sbom", "provenance", "vulnerabilityScan", "signer", "issuer"],
+      "properties": {
+        "signature": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "sbom": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "provenance": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "vulnerabilityScan": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "signer": {"type": "string", "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$"},
+        "issuer": {"type": "string", "pattern": "^https://[^/?#@\\s]+(?:/[^?#\\s]*)?$"}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"releases": {"minItems": 1}}}},
+    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"releases": {"maxItems": 0}}}}
+  ]
+}

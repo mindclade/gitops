@@ -1,0 +1,21 @@
+* @mindclade/release
+
+/.github/ @mindclade/release @mindclade/security
+/controllers/ @mindclade/platform @mindclade/security
+/projects/ @mindclade/platform @mindclade/security
+/platform/ @mindclade/platform @mindclade/release
+/environments/development/ @mindclade/release
+/environments/staging/ @mindclade/release @mindclade/platform
+/environments/production/ @mindclade/release @mindclade/platform @mindclade/security
+/environments/restricted/ @mindclade/release @mindclade/platform @mindclade/security
+/policy/ @mindclade/security @mindclade/release
+/schemas/ @mindclade/release @mindclade/platform
+/tooling/ @mindclade/release @mindclade/platform
+/runbooks/ @mindclade/platform @mindclade/security
+/SECURITY.md @mindclade/security @mindclade/release
+/LICENSE @mindclade/release @mindclade/security
+/README.md @mindclade/release @mindclade/platform
+/component.yaml @mindclade/platform @mindclade/release
+/BUILD.bazel @mindclade/platform @mindclade/release
+/MODULE.bazel @mindclade/platform @mindclade/security
+/justfile @mindclade/platform @mindclade/release

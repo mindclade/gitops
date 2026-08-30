@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  template.audit-sync: |
+    message: Application {{.app.metadata.name}} reconciled revision {{.app.status.sync.revision}} with phase {{.app.status.operationState.phase}}.
+  trigger.on-sync-status: |
+    - description: Record completed and failed reconciliations.
+      send: [audit-sync]
+      when: app.status.operationState.phase in ['Succeeded', 'Failed', 'Error']

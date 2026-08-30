@@ -1,0 +1,166 @@
+name: Promotion evidence verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [development, staging, production, restricted]
+      release_class:
+        description: Release record class
+        required: true
+        type: choice
+        options: [platform, service, worker]
+      component:
+        description: Component in the checked-out release record
+        required: true
+        type: string
+      cluster:
+        description: Cluster in the checked-out release record
+        required: true
+        type: string
+      artifact_source_revision:
+        description: Artifact source 40-character Git commit
+        required: true
+        type: string
+      artifact_reference:
+        description: Immutable artifact reference ending in its digest
+        required: true
+        type: string
+      artifact_digest:
+        description: Immutable sha256 artifact digest
+        required: true
+        type: string
+      prior_digest:
+        description: Currently admitted sha256 digest
+        required: true
+        type: string
+      attestation_digest:
+        description: Immutable evidence-bundle digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promotion-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  governance-preflight:
+    name: Require connected protected-environment governance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    env:
+      CONNECTED_GOVERNANCE_READY: ${{ vars.CONNECTED_GOVERNANCE_READY }}
+    steps:
+      - name: Fail closed until protected environments are qualified
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONNECTED_GOVERNANCE_READY" = true
+          test "$GITHUB_REF" = refs/heads/main
+  receipt:
+    name: Validate promotion receipt
+    needs: governance-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}-promotion
+    env:
+      TARGET_ENVIRONMENT: ${{ inputs.environment }}
+      RELEASE_CLASS: ${{ inputs.release_class }}
+      COMPONENT: ${{ inputs.component }}
+      TARGET_CLUSTER: ${{ inputs.cluster }}
+      ARTIFACT_SOURCE_REVISION: ${{ inputs.artifact_source_revision }}
+      ARTIFACT_REFERENCE: ${{ inputs.artifact_reference }}
+      ARTIFACT_DIGEST: ${{ inputs.artifact_digest }}
+      PRIOR_DIGEST: ${{ inputs.prior_digest }}
+      ATTESTATION_DIGEST: ${{ inputs.attestation_digest }}
+      TRUSTED_SIGNER: ${{ vars.PROMOTION_TRUSTED_SIGNER }}
+      TRUSTED_ISSUER: ${{ vars.PROMOTION_TRUSTED_ISSUER }}
+      GOVERNANCE_EVIDENCE: ${{ vars.PROMOTION_GOVERNANCE_EVIDENCE }}
+      APPROVAL_CONTEXT: github-environment:${{ inputs.environment }}-promotion
+      EVIDENCE_VERIFIER_IMPLEMENTATION: unbound
+      AUTOMATION_REPOSITORY: ${{ github.repository }}
+      AUTOMATION_RUN_ID: ${{ github.run_id }}
+      AUTOMATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+      AUTOMATION_REVISION: ${{ github.sha }}
+      AUTOMATION_REQUESTER: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          check-latest: false
+          cache: false
+      - name: Prove transition against checked-out desired state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$AUTOMATION_REVISION" = "$GITHUB_SHA"
+          test "$GOVERNANCE_EVIDENCE" != ""
+          test "$TRUSTED_SIGNER" != ""
+          test "$TRUSTED_ISSUER" != ""
+          case "$ARTIFACT_REFERENCE" in
+            *@"$ARTIFACT_DIGEST") ;;
+            *) echo "artifact reference does not match artifact digest" >&2; exit 1 ;;
+          esac
+          cd tooling
+          go run ./cmd/promotectl verify-transition --root .. \
+            --action promote \
+            --environment "$TARGET_ENVIRONMENT" \
+            --release-class "$RELEASE_CLASS" \
+            --component "$COMPONENT" \
+            --cluster "$TARGET_CLUSTER" \
+            --artifact-digest "$ARTIFACT_DIGEST" \
+            --prior-digest "$PRIOR_DIGEST"
+      - name: Block until cryptographic evidence verifier is implemented
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVIDENCE_VERIFIER_IMPLEMENTATION" != verified-v1 ]]; then
+            echo "promotion is intentionally blocked: no authoritative signature and attestation verifier is implemented" >&2
+            exit 1
+          fi
+      - name: Emit validated receipt without mutating desired state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ISSUED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cd tooling
+          go run ./cmd/promotectl receipt \
+            --environment "$TARGET_ENVIRONMENT" \
+            --release-class "$RELEASE_CLASS" \
+            --component "$COMPONENT" \
+            --cluster "$TARGET_CLUSTER" \
+            --source-revision "$ARTIFACT_SOURCE_REVISION" \
+            --artifact-reference "$ARTIFACT_REFERENCE" \
+            --artifact-digest "$ARTIFACT_DIGEST" \
+            --prior-digest "$PRIOR_DIGEST" \
+            --attestation-digest "$ATTESTATION_DIGEST" \
+            --signer "$TRUSTED_SIGNER" \
+            --issuer "$TRUSTED_ISSUER" \
+            --issued-at "$ISSUED_AT" \
+            --approvals "$APPROVAL_CONTEXT,governance-evidence:$GOVERNANCE_EVIDENCE" \
+            --repository "$AUTOMATION_REPOSITORY" \
+            --workflow-run-id "$AUTOMATION_RUN_ID" \
+            --workflow-run-attempt "$AUTOMATION_RUN_ATTEMPT" \
+            --checked-out-revision "$AUTOMATION_REVISION" \
+            --requester "$AUTOMATION_REQUESTER" > "$RUNNER_TEMP/promotion-receipt.json"
+          python3 -m json.tool "$RUNNER_TEMP/promotion-receipt.json" >/dev/null
+          sha256sum "$RUNNER_TEMP/promotion-receipt.json"
+      - name: Retain validated non-secret receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.environment }}-promotion-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          include-hidden-files: false

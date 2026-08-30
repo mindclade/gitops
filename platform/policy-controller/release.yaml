@@ -1,0 +1,13 @@
+apiVersion: gitops.mindclade.io/v1
+kind: PlatformRelease
+metadata:
+  name: policy-controller
+spec:
+  active: false
+  destinationNamespace: policy-system
+  artifact: null
+  requiredEvidence: [artifact-digest, signature, sbom, provenance, vulnerability-scan, promotion-receipt, governance-evidence]
+  rollout:
+    strategy: manual
+    prune: false
+    rollbackDigestRequired: true

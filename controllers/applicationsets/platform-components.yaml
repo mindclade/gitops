@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-components
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: [missingkey=error]
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: https://github.com/mindclade/gitops.git
+              revision: main
+              files:
+                - path: environments/*/platform-releases.yaml
+          - list:
+              elementsYaml: '{{ if .active }}{{ .releases | toJson }}{{ else }}[]{{ end }}'
+  template:
+    metadata:
+      name: '{{.cluster}}-{{.component}}'
+      labels:
+        gitops.mindclade.io/environment: '{{.environment}}'
+        gitops.mindclade.io/component: '{{.component}}'
+      annotations:
+        gitops.mindclade.io/release-record-digest: '{{.releaseRecordDigest}}'
+        gitops.mindclade.io/promotion-receipt-digest: '{{.promotionReceiptDigest}}'
+        gitops.mindclade.io/governance-evidence-digest: '{{.governanceEvidenceDigest}}'
+    spec:
+      project: platform
+      source:
+        repoURL: https://github.com/mindclade/gitops.git
+        targetRevision: '{{.desiredStateRevision}}'
+        path: 'platform/{{.component}}'
+      destination:
+        name: '{{.cluster}}'
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=false
+          - ApplyOutOfSyncOnly=true
+          - RespectIgnoreDifferences=true
+  syncPolicy:
+    applicationsSync: create-update
+    preserveResourcesOnDeletion: true

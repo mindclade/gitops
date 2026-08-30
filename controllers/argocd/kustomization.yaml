@@ -1,0 +1,74 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/e258ee23c3e52266d407572f4bcdfe7d9ed36cb5/manifests/install.yaml
+  - repository-credentials-reference.yaml
+  - ../../projects/platform.appproject.yaml
+  - ../../projects/services.appproject.yaml
+  - ../../projects/workers.appproject.yaml
+  - ../../projects/restricted.appproject.yaml
+  - ../applicationsets/platform-components.yaml
+  - ../applicationsets/control-plane-services.yaml
+  - ../applicationsets/execution-workers.yaml
+  - ../applicationsets/environment-root.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/part-of: argocd
+configMapGenerator:
+  - name: argocd-bootstrap-provenance
+    literals:
+      - upstream-version=v3.5.2
+      - upstream-revision=e258ee23c3e52266d407572f4bcdfe7d9ed36cb5
+      - upstream-url=https://raw.githubusercontent.com/argoproj/argo-cd/e258ee23c3e52266d407572f4bcdfe7d9ed36cb5/manifests/install.yaml
+      - upstream-sha256=9a87f2b3e14c278f12501eb0ef5c3955b27cf05370ca425381c6a908cf85a5c5
+      - argocd-image=quay.io/argoproj/argocd@sha256:e2aadfae709d904e87f46ba4aa49601d827b3022db22cd4d03aae816a2e7097b
+      - dex-image=ghcr.io/dexidp/dex@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462
+      - redis-image=public.ecr.aws/docker/library/redis@sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba
+images:
+  - name: quay.io/argoproj/argocd
+    digest: sha256:e2aadfae709d904e87f46ba4aa49601d827b3022db22cd4d03aae816a2e7097b
+  - name: ghcr.io/dexidp/dex
+    digest: sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462
+  - name: public.ecr.aws/docker/library/redis
+    digest: sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba
+patches:
+  - path: notifications.yaml
+  - path: resource-customizations.yaml
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-rbac-cm
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-rbac-cm
+      data:
+        policy.default: role:deny-all
+        policy.matchMode: glob
+        scopes: '[groups]'
+        policy.csv: |
+          p, role:security-auditor, applications, get, */*, allow
+          p, role:security-auditor, logs, get, */*, allow
+          p, role:release-promoter, applications, get, services/*, allow
+          p, role:release-promoter, applications, get, workers/*, allow
+          p, role:release-promoter, applications, sync, services/*, allow
+          p, role:release-promoter, applications, sync, workers/*, allow
+          p, role:platform-operator, applications, get, platform/*, allow
+          p, role:platform-operator, applications, sync, platform/*, allow
+          p, role:platform-operator, applications, action/*, platform/*, allow
+          g, mindclade:security, role:security-auditor
+          g, mindclade:release, role:release-promoter
+          g, mindclade:platform, role:platform-operator
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: argocd-server
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2

@@ -1,0 +1,10 @@
+replicas: 2
+audit:
+  interval: 60
+  constraintViolationLimit: 100
+validatingWebhook:
+  failurePolicy: Fail
+  timeoutSeconds: 5
+exemptNamespaces:
+  - kube-system
+  - gatekeeper-system

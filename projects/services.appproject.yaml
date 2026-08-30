@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: services
+  namespace: argocd
+  labels:
+    gitops.mindclade.io/authority: services
+spec:
+  description: Namespace-scoped control-plane services promoted by immutable digest.
+  sourceRepos:
+    - https://github.com/mindclade/gitops.git
+  destinations: []
+  clusterResourceBlacklist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true
+  roles:
+    - name: promoter
+      description: Reconcile reviewed service desired state.
+      groups: [mindclade:release]
+      policies:
+        - p, proj:services:promoter, applications, get, services/*, allow
+        - p, proj:services:promoter, applications, sync, services/*, allow
+    - name: auditor
+      groups: [mindclade:security]
+      policies:
+        - p, proj:services:auditor, applications, get, services/*, allow
