@@ -103,13 +103,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$AUTOMATION_REVISION" = "$GITHUB_SHA"
-          test "$GOVERNANCE_EVIDENCE" != ""
+          [[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]
           test "$TRUSTED_SIGNER" != ""
           test "$TRUSTED_ISSUER" != ""
-          case "$ARTIFACT_REFERENCE" in
-            *@"$PREVIOUS_DIGEST") ;;
-            *) echo "rollback artifact reference does not match previous digest" >&2; exit 1 ;;
-          esac
+          [[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]
+          [[ "$ARTIFACT_REFERENCE" == *@"$PREVIOUS_DIGEST" ]]
           cd tooling
           go run ./cmd/promotectl verify-transition --root .. \
             --action rollback \

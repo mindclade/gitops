@@ -18,10 +18,11 @@ spec:
               elementsYaml: '{{ if .active }}{{ .releases | toJson }}{{ else }}[]{{ end }}'
   template:
     metadata:
-      name: '{{.cluster}}-{{.component}}'
+      name: '{{.environment}}.worker.{{.cluster}}.{{.component}}'
       labels:
         gitops.mindclade.io/environment: '{{.environment}}'
-        gitops.mindclade.io/release-class: workers
+        gitops.mindclade.io/release-class: worker
+        gitops.mindclade.io/component: '{{.component}}'
       annotations:
         gitops.mindclade.io/release-record-digest: '{{.releaseRecordDigest}}'
         gitops.mindclade.io/promotion-receipt-digest: '{{.promotionReceiptDigest}}'
@@ -31,9 +32,10 @@ spec:
       source:
         repoURL: https://github.com/mindclade/gitops.git
         targetRevision: '{{.desiredStateRevision}}'
-        path: 'environments/{{.environment}}'
+        path: '{{.desiredStatePath}}'
         kustomize:
-          namePrefix: workers-
+          images:
+            - '{{.component}}={{.artifact}}'
       destination:
         name: '{{.cluster}}'
         namespace: '{{.namespace}}'

@@ -18,7 +18,7 @@ spec:
               elementsYaml: '{{ if .active }}{{ .clusters | toJson }}{{ else }}[]{{ end }}'
   template:
     metadata:
-      name: '{{.name}}-environment-root'
+      name: '{{.environment}}.root.{{.name}}'
       labels:
         gitops.mindclade.io/environment: '{{.environment}}'
       annotations:

@@ -18,9 +18,10 @@ spec:
               elementsYaml: '{{ if .active }}{{ .releases | toJson }}{{ else }}[]{{ end }}'
   template:
     metadata:
-      name: '{{.cluster}}-{{.component}}'
+      name: '{{.environment}}.platform.{{.cluster}}.{{.component}}'
       labels:
         gitops.mindclade.io/environment: '{{.environment}}'
+        gitops.mindclade.io/release-class: platform
         gitops.mindclade.io/component: '{{.component}}'
       annotations:
         gitops.mindclade.io/release-record-digest: '{{.releaseRecordDigest}}'

@@ -16,6 +16,14 @@ infrastructure export, a registered destination, an immutable desired-state
 revision and record digest, signed artifact evidence, and the protected
 promotion workflow. Missing evidence is a denial, never a fallback.
 
+Activation is root-first. `cluster-set.yaml` and `infrastructure-exports.yaml`
+form an atomic environment-root pair and must activate together. Once that root
+is active, platform, service, worker, policy, and secret documents may be staged
+independently; activating any of them before the root is invalid. The initial
+source has no approved service or worker component Kustomization roots. A future
+reviewed activation change must add those roots before admitting workload
+releases.
+
 The mapping is explicit: `cluster-set.yaml` drives the environment-root set;
 `platform-releases.yaml`, `service-releases.yaml`, and `worker-releases.yaml`
 drive their corresponding sets. Each active list item names its destination and
@@ -23,6 +31,16 @@ contains a 40-character `desiredStateRevision`; release items also carry
 immutable release-record, promotion-receipt, and governance-evidence digests.
 Those record values—not cluster labels or mutable artifact tags—become the
 Application source revision and audit annotations.
+
+Every workload release selects exactly one canonical `desiredStatePath`:
+`environments/<environment>/services/<component>` for services or
+`environments/<environment>/workers/<component>` for workers. Its Application
+renders only that path and binds the component image to the release's immutable
+artifact with a Kustomize image override. Generated names are globally scoped
+with dots: `<environment>.root.<cluster>`,
+`<environment>.platform.<cluster>.<component>`,
+`<environment>.service.<cluster>.<component>`, or
+`<environment>.worker.<cluster>.<component>`.
 
 ## Authority boundary
 
@@ -49,7 +67,8 @@ reviewed outside this repository:
   protection, required checks, merge-queue behavior, and environment rules are
   qualified;
 - environment-scoped `PROMOTION_GOVERNANCE_EVIDENCE` containing the immutable
-  `sha256:` digest of that qualification evidence;
+  `sha256:` digest of that qualification evidence in every environment,
+  including development and staging;
 - environment-scoped `PROMOTION_TRUSTED_SIGNER` and
   `PROMOTION_TRUSTED_ISSUER` identities, controlled with the same protected
   environment review rules;
@@ -84,7 +103,8 @@ just bazel-test
 the checksum-pinned Argo overlay, checks Kubernetes schemas, digest-only images,
 Rego, strict JSON Schemas, and the exact source tree. `verify-bootstrap`
 downloads the commit-pinned upstream Argo CD manifest and verifies its declared
-SHA-256. Nothing in these commands connects to a cluster or promotes a release.
+SHA-256. `just bazel-test` selects Bazel 9.2.0 through Bazelisk. Nothing in these
+commands connects to a cluster or promotes a release.
 The canonical bootstrap is checked as Kubernetes 1.34 and the Argo namespace
 pins restricted Pod Security admission enforcement, audit, and warning to
 `v1.34` rather than a moving `latest` target.

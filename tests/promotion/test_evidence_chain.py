@@ -11,6 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+ENVIRONMENTS = ("development", "staging", "production", "restricted")
+GOVERNANCE_DIGEST = "sha256:" + "f" * 64
 
 
 class EvidenceChainTest(unittest.TestCase):
@@ -48,6 +50,9 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertEqual(schema["properties"]["approvals"]["minItems"], 2)
         self.assertTrue(DIGEST_PATTERN.fullmatch("sha256:" + "a" * 64))
         self.assertFalse(DIGEST_PATTERN.fullmatch("latest"))
+        artifact_reference_pattern = re.compile(schema["properties"]["artifactReference"]["pattern"])
+        self.assertTrue(artifact_reference_pattern.fullmatch("registry.example/api@sha256:" + "a" * 64))
+        self.assertFalse(artifact_reference_pattern.fullmatch("@sha256:" + "a" * 64))
 
     def test_protected_workflow_evidence_is_not_user_supplied(self):
         workflow = (ROOT / ".github/workflows/promotion.yml").read_text()
@@ -62,6 +67,9 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertNotIn("id-token: write", workflow)
         self.assertIn('test "$AUTOMATION_REVISION" = "$GITHUB_SHA"', workflow)
+        self.assertIn('[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
+        self.assertIn('[[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]', workflow)
+        self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$ARTIFACT_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
         self.assertIn("EVIDENCE_VERIFIER_IMPLEMENTATION: unbound", workflow)
         self.assertIn('!= verified-v1', workflow)
@@ -82,7 +90,6 @@ class EvidenceChainTest(unittest.TestCase):
             "signer": "https://issuer.example/workload/release",
             "issuer": "https://issuer.example",
             "issued-at": issued_at,
-            "approvals": "review:release,review:security",
             "repository": "mindclade/gitops",
             "workflow-run-id": "12345",
             "workflow-run-attempt": "2",
@@ -90,19 +97,69 @@ class EvidenceChainTest(unittest.TestCase):
             "requester": "release-operator",
         }
         values.update(overrides)
+        if "approvals" not in overrides:
+            values["approvals"] = (
+                f"github-environment:{values['environment']}-promotion,"
+                f"governance-evidence:{GOVERNANCE_DIGEST}"
+            )
         command = [str(self.promotectl), "receipt"]
         for name, value in values.items():
             command.extend((f"--{name}", value))
         return subprocess.run(command, capture_output=True, text=True)
 
-    def test_receipt_rejects_unsafe_identity_stale_time_and_unbound_context(self):
+    def test_receipt_accepts_governed_evidence_in_every_environment(self):
         if self.promotectl is None:
             self.skipTest("Go toolchain is unavailable")
-        accepted = self._receipt()
-        self.assertEqual(accepted.returncode, 0, accepted.stderr)
-        receipt = json.loads(accepted.stdout)
-        self.assertNotEqual(receipt["sourceRevision"], receipt["checkedOutRevision"])
-        self.assertEqual(receipt["repository"], "mindclade/gitops")
+        for environment in ENVIRONMENTS:
+            with self.subTest(environment=environment):
+                accepted = self._receipt(environment=environment)
+                self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                receipt = json.loads(accepted.stdout)
+                self.assertEqual(receipt["environment"], environment)
+                self.assertNotEqual(receipt["sourceRevision"], receipt["checkedOutRevision"])
+                self.assertEqual(receipt["repository"], "mindclade/gitops")
+
+    def test_receipt_rejects_missing_malformed_or_mismatched_governance_in_every_environment(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
+        for environment in ENVIRONMENTS:
+            context = f"github-environment:{environment}-promotion"
+            other_environment = "staging" if environment == "development" else "development"
+            invalid_approvals = (
+                f"{context},review:security",
+                f"{context},governance-evidence:not-a-digest",
+                f"github-environment:{other_environment}-promotion,governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},governance-evidence:not-a-digest,governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},governance-evidence:{GOVERNANCE_DIGEST},governance-evidence:{GOVERNANCE_DIGEST}",
+                f"{context},governance-evidence:{GOVERNANCE_DIGEST},xx",
+                f"{context},governance-evidence:{GOVERNANCE_DIGEST},{'x' * 257}",
+            )
+            for approvals in invalid_approvals:
+                with self.subTest(environment=environment, approvals=approvals):
+                    result = self._receipt(environment=environment, approvals=approvals)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_receipt_rejects_artifact_references_outside_the_schema_contract(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
+        digest = "sha256:" + "b" * 64
+        invalid_references = (
+            "@" + digest,
+            "registry.example/api @" + digest,
+            "registry.example/api\t@" + digest,
+            "registry.example/api@" + digest + " ",
+            "registry.example/api@sha256:" + "a" * 64,
+            "registry.example/api:latest",
+            "registry.example/api@latest",
+        )
+        for artifact_reference in invalid_references:
+            with self.subTest(artifact_reference=artifact_reference):
+                result = self._receipt(**{"artifact-reference": artifact_reference})
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_receipt_rejects_unsafe_identity_stale_time_and_invalid_metadata(self):
+        if self.promotectl is None:
+            self.skipTest("Go toolchain is unavailable")
 
         future = (datetime.now(timezone.utc) + timedelta(minutes=6)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         expired = (datetime.now(timezone.utc) - timedelta(hours=25)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -113,8 +170,9 @@ class EvidenceChainTest(unittest.TestCase):
             {"signer": "https:///missing-host"},
             {"issuer": "https://user@issuer.example"},
             {"issuer": "https://issuer.example?tenant=mutable"},
-            {"artifact-reference": "registry.example/api:latest"},
             {"release-class": "unknown"},
+            {"component": "invalid-component-"},
+            {"cluster": "invalid-cluster-"},
             {"issued-at": future},
             {"issued-at": expired},
             {"issued-at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()},

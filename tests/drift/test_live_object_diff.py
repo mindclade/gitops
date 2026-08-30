@@ -72,6 +72,13 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIn("kubeconform -strict", workflow)
         self.assertIn("kustomize build", workflow)
 
+    def test_bazelisk_uses_pinned_bazel_release(self):
+        workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
+        justfile = (ROOT / "justfile").read_text()
+        self.assertIn('USE_BAZEL_VERSION: "9.2.0"', workflow)
+        self.assertIn("USE_BAZEL_VERSION=9.2.0 bazelisk", justfile)
+        self.assertFalse((ROOT / ".bazelversion").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

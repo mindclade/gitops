@@ -16,9 +16,10 @@ const (
 )
 
 var (
-	positiveIntegerPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
-	requesterPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.\-\[\]]{0,127}$`)
-	componentPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{2,62}$`)
+	positiveIntegerPattern   = regexp.MustCompile(`^[1-9][0-9]*$`)
+	requesterPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.\-\[\]]{0,127}$`)
+	componentPattern         = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$`)
+	artifactReferencePattern = regexp.MustCompile(`^[^[:space:]]+@sha256:[0-9a-f]{64}$`)
 )
 
 type Receipt struct {
@@ -79,8 +80,11 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 	if receipt.ArtifactDigest == receipt.PriorDigest {
 		return fmt.Errorf("artifact and prior digests must differ")
 	}
-	if !strings.HasSuffix(receipt.ArtifactReference, "@"+receipt.ArtifactDigest) || strings.ContainsAny(receipt.ArtifactReference, " \r\n\t") {
-		return fmt.Errorf("artifact reference must end in its immutable digest")
+	if !artifactReferencePattern.MatchString(receipt.ArtifactReference) {
+		return fmt.Errorf("artifact reference must be a complete immutable sha256 reference")
+	}
+	if !strings.HasSuffix(receipt.ArtifactReference, "@"+receipt.ArtifactDigest) {
+		return fmt.Errorf("artifact reference digest must match artifact digest")
 	}
 	if !safeHTTPSIdentity(receipt.Signer) {
 		return fmt.Errorf("signer must be an HTTPS workload identity URI")
@@ -113,29 +117,33 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 	}
 	unique := map[string]bool{}
 	for _, approval := range receipt.Approvals {
-		approval = strings.TrimSpace(approval)
-		if approval != "" {
-			unique[approval] = true
+		if strings.TrimSpace(approval) != approval || len(approval) < 3 || len(approval) > 256 {
+			return fmt.Errorf("approval records must be canonical strings between 3 and 256 characters")
 		}
+		if unique[approval] {
+			return fmt.Errorf("approval records must be unique")
+		}
+		unique[approval] = true
 	}
 	if len(unique) < 2 {
 		return fmt.Errorf("at least two distinct approval records are required")
 	}
-	if receipt.Environment == "production" || receipt.Environment == "restricted" {
-		contextPrefix := "github-environment:" + receipt.Environment + "-promotion"
-		hasContext := false
-		hasGovernanceEvidence := false
-		for approval := range unique {
-			if approval == contextPrefix {
-				hasContext = true
-			}
-			if strings.HasPrefix(approval, "governance-evidence:") && release.ValidateDigest(strings.TrimPrefix(approval, "governance-evidence:")) == nil {
-				hasGovernanceEvidence = true
-			}
+	context := "github-environment:" + receipt.Environment + "-promotion"
+	hasContext := false
+	hasGovernanceEvidence := false
+	for approval := range unique {
+		if approval == context {
+			hasContext = true
 		}
-		if !hasContext || !hasGovernanceEvidence {
-			return fmt.Errorf("protected promotion requires environment context and immutable governance evidence")
+		if strings.HasPrefix(approval, "governance-evidence:") {
+			if err := release.ValidateDigest(strings.TrimPrefix(approval, "governance-evidence:")); err != nil {
+				return fmt.Errorf("governance evidence must be an immutable sha256 digest: %w", err)
+			}
+			hasGovernanceEvidence = true
 		}
+	}
+	if !hasContext || !hasGovernanceEvidence {
+		return fmt.Errorf("receipt requires exact environment context and immutable governance evidence")
 	}
 	return nil
 }

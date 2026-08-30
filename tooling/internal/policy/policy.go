@@ -214,7 +214,7 @@ func ValidateEnvironment(root, environment string) error {
 		return fmt.Errorf("unknown environment %q", environment)
 	}
 	documents := map[string]map[string]any{}
-	var activation *bool
+	activeDocuments := map[string]bool{}
 	for _, name := range environmentDocuments {
 		relative := filepath.Join("environments", environment, name)
 		document, err := validateSchemaDocument(root, relative, filepath.Join("schemas", "v1", environmentSchemas[name]))
@@ -228,13 +228,17 @@ func ValidateEnvironment(root, environment string) error {
 		if !ok {
 			return fmt.Errorf("%s must declare boolean active", relative)
 		}
-		if activation == nil {
-			activation = new(bool)
-			*activation = active
-		} else if active != *activation {
-			return fmt.Errorf("%s active state differs from other %s contracts", relative, environment)
-		}
+		activeDocuments[name] = active
 		documents[name] = document
+	}
+	rootActive := activeDocuments["cluster-set.yaml"]
+	if activeDocuments["infrastructure-exports.yaml"] != rootActive {
+		return fmt.Errorf("%s cluster-set.yaml and infrastructure-exports.yaml active states must match", environment)
+	}
+	for _, name := range []string{"platform-releases.yaml", "service-releases.yaml", "worker-releases.yaml", "policy-bindings.yaml", "secret-references.yaml"} {
+		if activeDocuments[name] && !rootActive {
+			return fmt.Errorf("%s cannot be active before the %s environment root", name, environment)
+		}
 	}
 
 	clusters, err := validateClusters(documents["cluster-set.yaml"], environment)
@@ -245,7 +249,7 @@ func ValidateEnvironment(root, environment string) error {
 	if err != nil {
 		return err
 	}
-	if activation != nil && *activation {
+	if rootActive {
 		for cluster := range clusters {
 			if !memberships[cluster] {
 				return fmt.Errorf("active cluster %q has no matching infrastructure cluster-membership export", cluster)
@@ -260,6 +264,39 @@ func ValidateEnvironment(root, environment string) error {
 	for _, name := range []string{"platform-releases.yaml", "service-releases.yaml", "worker-releases.yaml"} {
 		if err := validateReleaseSet(documents[name], environment, clusters, name); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+type workloadReleaseContract struct {
+	releaseClass string
+	directory    string
+}
+
+var workloadReleaseContracts = map[string]workloadReleaseContract{
+	"service-releases.yaml": {releaseClass: "service", directory: "services"},
+	"worker-releases.yaml":  {releaseClass: "worker", directory: "workers"},
+}
+
+func validateWorkloadReleaseMetadata(document map[string]any, environment, source string) error {
+	contract, workload := workloadReleaseContracts[source]
+	if !workload {
+		return nil
+	}
+	declaredClass := fmt.Sprint(document["releaseClass"])
+	if declaredClass != contract.releaseClass {
+		return fmt.Errorf("%s declares releaseClass %q; required class is %q", source, declaredClass, contract.releaseClass)
+	}
+	values, err := objectArray(document, "releases", source)
+	if err != nil {
+		return err
+	}
+	for _, record := range values {
+		component := fmt.Sprint(record["component"])
+		expected := filepath.ToSlash(filepath.Join("environments", environment, contract.directory, component))
+		if actual := fmt.Sprint(record["desiredStatePath"]); actual != expected {
+			return fmt.Errorf("%s release %s desiredStatePath %q must equal %q", source, component, actual, expected)
 		}
 	}
 	return nil
@@ -341,6 +378,9 @@ func safeClusterServer(raw string) bool {
 }
 
 func validateReleaseSet(document map[string]any, environment string, clusters map[string]bool, source string) error {
+	if err := validateWorkloadReleaseMetadata(document, environment, source); err != nil {
+		return err
+	}
 	values, err := objectArray(document, "releases", source)
 	if err != nil {
 		return err
@@ -461,6 +501,9 @@ func VerifyTransition(root, action, environment, releaseClass, component, cluste
 	}
 	document, err := validateSchemaDocument(root, filepath.Join("environments", environment, filename), filepath.Join("schemas", "v1", environmentSchemas[filename]))
 	if err != nil {
+		return err
+	}
+	if err := validateWorkloadReleaseMetadata(document, environment, filename); err != nil {
 		return err
 	}
 	if active, _ := document["active"].(bool); !active {
@@ -792,25 +835,47 @@ func validateFailClosedSources(root string) error {
 			return fmt.Errorf("inactive credential binding contains premature binding %q", forbidden)
 		}
 	}
-	applicationSets := map[string]string{
-		"environment-root.yaml":       "cluster-set.yaml",
-		"platform-components.yaml":    "platform-releases.yaml",
-		"control-plane-services.yaml": "service-releases.yaml",
-		"execution-workers.yaml":      "worker-releases.yaml",
+	applicationSets := map[string]struct {
+		record     string
+		invariants []string
+	}{
+		"environment-root.yaml": {
+			record:     "cluster-set.yaml",
+			invariants: []string{`name: '{{.environment}}.root.{{.name}}'`},
+		},
+		"platform-components.yaml": {
+			record:     "platform-releases.yaml",
+			invariants: []string{`name: '{{.environment}}.platform.{{.cluster}}.{{.component}}'`, "gitops.mindclade.io/release-class: platform"},
+		},
+		"control-plane-services.yaml": {
+			record:     "service-releases.yaml",
+			invariants: []string{`name: '{{.environment}}.service.{{.cluster}}.{{.component}}'`, "gitops.mindclade.io/release-class: service", `path: '{{.desiredStatePath}}'`, "images:", `- '{{.component}}={{.artifact}}'`},
+		},
+		"execution-workers.yaml": {
+			record:     "worker-releases.yaml",
+			invariants: []string{`name: '{{.environment}}.worker.{{.cluster}}.{{.component}}'`, "gitops.mindclade.io/release-class: worker", `path: '{{.desiredStatePath}}'`, "images:", `- '{{.component}}={{.artifact}}'`},
+		},
 	}
-	for name, record := range applicationSets {
+	for name, contract := range applicationSets {
 		content, err := os.ReadFile(filepath.Join(root, "controllers", "applicationsets", name))
 		if err != nil {
 			return err
 		}
 		text := string(content)
-		for _, invariant := range []string{"matrix:", "elementsYaml:", "if .active", "environments/*/" + record, "desiredStateRevision"} {
+		for _, invariant := range append([]string{"matrix:", "elementsYaml:", "if .active", "environments/*/" + contract.record, "desiredStateRevision"}, contract.invariants...) {
 			if !strings.Contains(text, invariant) {
 				return fmt.Errorf("%s lacks dynamic release gating %q", name, invariant)
 			}
 		}
 		if strings.Contains(text, "elements: []") {
 			return fmt.Errorf("%s uses a hand-edited static generator", name)
+		}
+		if contract.record == "service-releases.yaml" || contract.record == "worker-releases.yaml" {
+			for _, forbidden := range []string{`path: 'environments/{{.environment}}'`, "namePrefix:"} {
+				if strings.Contains(text, forbidden) {
+					return fmt.Errorf("%s contains shared workload rendering %q", name, forbidden)
+				}
+			}
 		}
 	}
 	for _, project := range []string{"platform", "services", "workers", "restricted"} {
@@ -828,7 +893,7 @@ func validateFailClosedSources(root string) error {
 			return err
 		}
 		text := string(content)
-		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_IMPLEMENTATION: unbound`, `!= verified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "--checked-out-revision", "--workflow-run-id", "retention-days: 90"} {
+		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_IMPLEMENTATION: unbound`, `!= verified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "--checked-out-revision", "--workflow-run-id", "retention-days: 90", `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]`} {
 			if !strings.Contains(text, invariant) {
 				return fmt.Errorf("%s lacks connected-governance preflight %q", workflow, invariant)
 			}
@@ -841,10 +906,17 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	for _, invariant := range []string{"--proto-redir '=https'", "--location", "-kubernetes-version 1.34.0"} {
+	for _, invariant := range []string{"--proto-redir '=https'", "--location", "-kubernetes-version 1.34.0", `USE_BAZEL_VERSION: "9.2.0"`} {
 		if !strings.Contains(string(pullRequest), invariant) {
 			return fmt.Errorf("pull-request workflow lacks hardened tool bootstrap %q", invariant)
 		}
+	}
+	justfile, err := os.ReadFile(filepath.Join(root, "justfile"))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(justfile), "USE_BAZEL_VERSION=9.2.0 bazelisk") {
+		return fmt.Errorf("just bazel-test lacks a pinned Bazel release")
 	}
 	namespace, err := os.ReadFile(filepath.Join(root, "controllers", "argocd", "namespace.yaml"))
 	if err != nil {

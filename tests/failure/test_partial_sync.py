@@ -52,6 +52,99 @@ class PartialSyncTest(unittest.TestCase):
             self.assertNotIn("prune: true", text)
             self.assertNotRegex(text, r"targetRevision:\s*(?:main|HEAD|master)")
 
+    def test_application_names_partition_environment_and_release_class(self):
+        expected_templates = {
+            "environment-root.yaml": "{{.environment}}.root.{{.name}}",
+            "platform-components.yaml": "{{.environment}}.platform.{{.cluster}}.{{.component}}",
+            "control-plane-services.yaml": "{{.environment}}.service.{{.cluster}}.{{.component}}",
+            "execution-workers.yaml": "{{.environment}}.worker.{{.cluster}}.{{.component}}",
+        }
+        for filename, template in expected_templates.items():
+            text = (ROOT / "controllers/applicationsets" / filename).read_text()
+            self.assertIn(f"name: '{template}'", text)
+
+        applications = {
+            f"{environment}.{release_class}.shared-cluster.shared-component"
+            for environment in ("development", "staging")
+            for release_class in ("platform", "service", "worker")
+        }
+        applications.update(
+            f"{environment}.root.shared-cluster"
+            for environment in ("development", "staging")
+        )
+        self.assertEqual(len(applications), 8)
+
+    def test_release_applications_have_canonical_labels(self):
+        expected_classes = {
+            "platform-components.yaml": "platform",
+            "control-plane-services.yaml": "service",
+            "execution-workers.yaml": "worker",
+        }
+        for filename, release_class in expected_classes.items():
+            text = (ROOT / "controllers/applicationsets" / filename).read_text()
+            self.assertIn(
+                f"gitops.mindclade.io/release-class: {release_class}",
+                text,
+            )
+            self.assertIn(
+                "gitops.mindclade.io/component: '{{.component}}'",
+                text,
+            )
+
+    def test_workload_applications_select_one_component_and_artifact(self):
+        schema = json.loads(
+            (ROOT / "schemas/v1/workload_releases.schema.json").read_text()
+        )
+        release = schema["properties"]["releases"]["items"]
+        self.assertIn("desiredStatePath", release["required"])
+        path_pattern = re.compile(release["properties"]["desiredStatePath"]["pattern"])
+        self.assertIsNotNone(
+            path_pattern.fullmatch(
+                "environments/development/services/control-plane"
+            )
+        )
+        self.assertIsNotNone(
+            path_pattern.fullmatch(
+                "environments/restricted/workers/training-worker"
+            )
+        )
+        self.assertIsNone(path_pattern.fullmatch("environments/development"))
+        self.assertIsNone(
+            path_pattern.fullmatch("environments/development/services/component-")
+        )
+
+        for filename in ("control-plane-services.yaml", "execution-workers.yaml"):
+            text = (ROOT / "controllers/applicationsets" / filename).read_text()
+            self.assertIn("path: '{{.desiredStatePath}}'", text)
+            self.assertIn("images:", text)
+            self.assertIn("- '{{.component}}={{.artifact}}'", text)
+            self.assertNotIn("path: 'environments/{{.environment}}'", text)
+            self.assertNotIn("namePrefix:", text)
+
+    def test_generated_name_segments_reject_trailing_hyphens(self):
+        locations = (
+            ("workload_releases.schema.json", ("component", "cluster")),
+            ("platform_releases.schema.json", ("cluster",)),
+            ("cluster_set.schema.json", ("name",)),
+            ("promotion_receipt.schema.json", ("component", "cluster")),
+        )
+        for filename, fields in locations:
+            schema = json.loads((ROOT / "schemas/v1" / filename).read_text())
+            if filename == "cluster_set.schema.json":
+                properties = schema["properties"]["clusters"]["items"]["properties"]
+            elif filename in (
+                "workload_releases.schema.json",
+                "platform_releases.schema.json",
+            ):
+                properties = schema["properties"]["releases"]["items"]["properties"]
+            else:
+                properties = schema["properties"]
+            for field in fields:
+                pattern = re.compile(properties[field]["pattern"])
+                with self.subTest(schema=filename, field=field):
+                    self.assertIsNotNone(pattern.fullmatch("valid-name"))
+                    self.assertIsNone(pattern.fullmatch("invalid-name-"))
+
 
 if __name__ == "__main__":
     unittest.main()
