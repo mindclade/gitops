@@ -7,7 +7,7 @@ resources, contain credentials, or grant CI direct cluster access.
 
 ## Blueprint conformance status
 
-The tracked source matches the 128-file `gitops/` tree in
+The tracked source matches the 129-file `gitops/` tree in
 `MINDCLADE_MONOREPO_BLUEPRINT_v3.4.3_OPTIMIZED.md` Appendix A3.13 exactly.
 That structural result is not implementation qualification. The A3.13
 production contract is currently **FAIL**: the repository is pre-production,
@@ -153,7 +153,7 @@ SHA-256. `just bazel-test` selects Bazel 9.2.0 through Bazelisk. Nothing in thes
 commands connects to a cluster or promotes a release.
 
 The canonical Bazel recipe and CI deliberately pass `--lockfile_mode=off` because
-the current authoritative 128-file blueprint does not include
+the current authoritative 129-file blueprint does not include
 `MODULE.bazel.lock`. A direct default Bzlmod command can generate that untracked
 audit byproduct and make exact-tree validation fail. Use `just bazel-test` for
 blueprint-conformant checks; do not interpret the lockfile exception as a claim

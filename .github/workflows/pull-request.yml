@@ -61,7 +61,7 @@ jobs:
         run: nix flake check --no-update-lock-file
       - name: Validate exact source tree
         shell: bash
-        run: test "$(git ls-files | wc -l | tr -d ' ')" = 128
+        run: test "$(git ls-files | wc -l | tr -d ' ')" = 129
       - name: Validate source, schemas, renders, and policies
         run: nix develop --no-update-lock-file .#ci --command just validate
       - name: Verify Bazel graph with the Nix-provided Bazelisk
