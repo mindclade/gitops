@@ -7,7 +7,7 @@ resources, contain credentials, or grant CI direct cluster access.
 
 ## Blueprint conformance status
 
-The tracked source matches the 126-file `gitops/` tree in
+The tracked source matches the 128-file `gitops/` tree in
 `MINDCLADE_MONOREPO_BLUEPRINT_v3.4.0_OPTIMIZED.md` Appendix A3.13 exactly.
 That structural result is not implementation qualification. The A3.13
 production contract is currently **FAIL**: the repository is pre-production,
@@ -128,11 +128,22 @@ Required entry points are read-only with respect to repositories, clusters, and
 cloud accounts:
 
 ```sh
-just validate
-just render development
-just verify-bootstrap
-just bazel-test
+nix build --no-link --no-update-lock-file .#toolchain
+nix flake check --no-update-lock-file
+nix develop .#ci --command just validate
+nix develop .#ci --command just render development
+nix develop .#ci --command just verify-bootstrap
+nix develop .#ci --command just bazel-test
 ```
+
+`flake.lock` is the system-tool supply-chain authority for Linux x86-64 and
+Apple Silicon. The `packages.toolchain`, `devShells.default`, `devShells.ci`,
+`formatter`, and `checks.toolchain` outputs use one reviewed package set. Go
+modules remain owned by `tooling/go.mod` and `tooling/go.sum`; Bazel modules,
+toolchains, and action inputs remain owned by `MODULE.bazel` and BUILD files.
+Nix pins the tools that execute those native dependency graphs and does not
+replace them. Lock updates are isolated changes; normal checks always use
+`--no-update-lock-file`.
 
 `just render` writes canonical JSON to standard output. `just validate` renders
 the checksum-pinned Argo overlay, checks Kubernetes schemas, digest-only images,
@@ -142,7 +153,7 @@ SHA-256. `just bazel-test` selects Bazel 9.2.0 through Bazelisk. Nothing in thes
 commands connects to a cluster or promotes a release.
 
 The canonical Bazel recipe and CI deliberately pass `--lockfile_mode=off` because
-the current authoritative 126-file blueprint does not include
+the current authoritative 128-file blueprint does not include
 `MODULE.bazel.lock`. A direct default Bzlmod command can generate that untracked
 audit byproduct and make exact-tree validation fail. Use `just bazel-test` for
 blueprint-conformant checks; do not interpret the lockfile exception as a claim

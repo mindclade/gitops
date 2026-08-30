@@ -13,9 +13,9 @@ Describe the desired-state, policy, tooling, or runbook change and its owner.
 
 ## Validation
 
-- [ ] `just validate`
-- [ ] `opa test policy`
-- [ ] `just bazel-test`
+- [ ] `nix flake check --no-update-lock-file`
+- [ ] `nix develop --no-update-lock-file .#ci --command just validate`
+- [ ] `nix develop --no-update-lock-file .#ci --command just bazel-test`
 - [ ] Deterministic render checked for every affected environment.
 - [ ] Upstream bootstrap checksum checked when Argo CD provenance changed.
 

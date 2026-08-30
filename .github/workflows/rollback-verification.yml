@@ -67,6 +67,9 @@ jobs:
     needs: governance-preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: nix develop --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
     environment:
       name: production-promotion
     env:
@@ -88,13 +91,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Install pinned Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         with:
-          go-version: "1.26.6"
-          check-latest: false
-          cache: false
+          determinate: false
+          diagnostic-endpoint: ""
+          github-token: ""
+          kvm: false
+          nix-package-url: https://releases.nixos.org/nix/nix-2.31.2/nix-2.31.2-x86_64-linux.tar.xz
+          source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb
+          summarize: false
+          trust-runner-user: false
       - name: Prove rollback against checked-out desired state
-        shell: bash
         run: |
           set -euo pipefail
           test "$AUTOMATION_REVISION" = "$GITHUB_SHA"
@@ -120,7 +128,6 @@ jobs:
             --artifact-digest "$PREVIOUS_DIGEST" \
             --prior-digest "$CURRENT_DIGEST"
       - name: Enforce JIT-09 implementation and qualification gate
-        shell: bash
         run: |
           set -euo pipefail
           if [[ "$EVIDENCE_VERIFIER_GATE" != qualified-v1 ]]; then

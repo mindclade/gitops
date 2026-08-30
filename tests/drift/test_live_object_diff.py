@@ -1,10 +1,28 @@
+import os
 import re
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+def _repository_root():
+    if "TEST_SRCDIR" not in os.environ:
+        return Path(__file__).resolve().parents[2], None
+    runfiles_root = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"]
+    temporary = tempfile.TemporaryDirectory()
+    root = Path(temporary.name)
+    for relative in os.environ["GITOPS_SOURCE_RUNFILES"].split():
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise RuntimeError(f"unsafe source runfile path: {relative}")
+        target = root / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((runfiles_root / relative_path).read_bytes())
+    return root, temporary
+
+
+ROOT, _ROOT_TEMPORARY = _repository_root()
 RUNBOOKS = {
     "Argo CD unavailable": "runbooks/argocd-unavailable.md",
     "Cluster rebootstrap": "runbooks/cluster-rebootstrap.md",
@@ -72,7 +90,7 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_exact_blueprint_file_count(self):
         files = [path for path in ROOT.rglob("*") if path.is_file() and ".git" not in path.parts]
-        self.assertEqual(len(files), 126)
+        self.assertEqual(len(files), 128)
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):
@@ -100,6 +118,19 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIsNone(re.search(r"(?m)^\s*p, role:deny-all,", kustomization))
         for role in ("security-auditor", "release-promoter", "platform-operator"):
             self.assertIn(f"p, role:{role}", kustomization)
+
+    def test_revision_sync_requires_ungranted_override_privilege(self):
+        core_config = (ROOT / "controllers/argocd/resource-customizations.yaml").read_text()
+        self.assertIn(
+            'application.sync.requireOverridePrivilegeForRevisionSync: "true"',
+            core_config,
+        )
+        authority_sources = [
+            (ROOT / "controllers/argocd/kustomization.yaml").read_text(),
+        ] + [path.read_text() for path in sorted((ROOT / "projects").glob("*.yaml"))]
+        for source in authority_sources:
+            self.assertNotIn(", applications, override,", source)
+            self.assertNotIn(", applications, action/", source)
 
     def test_bootstrap_images_are_digest_pinned(self):
         kustomization = (ROOT / "controllers/argocd/kustomization.yaml").read_text()
@@ -207,12 +238,14 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_source_validation_covers_main_and_merge_queue(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
+        justfile = (ROOT / "justfile").read_text()
         self.assertTrue(workflow.startswith("name: Pull request\n"))
         self.assertIn("\n  required:\n    name: required\n", workflow)
         self.assertIn("push:\n    branches: [main]", workflow)
         self.assertIn("merge_group:\n    types: [checks_requested]", workflow)
-        self.assertIn("kubeconform -strict", workflow)
-        self.assertIn("kustomize build", workflow)
+        self.assertIn("nix develop --no-update-lock-file .#ci --command just validate", workflow)
+        self.assertIn("kubeconform -strict", justfile)
+        self.assertIn("kustomize build", justfile)
 
     def test_all_workflows_use_the_organization_approved_checkout_pin(self):
         expected = (
@@ -229,11 +262,51 @@ class LiveObjectDiffTest(unittest.TestCase):
                 self.assertIn(expected, source)
                 self.assertNotIn(stale, source)
 
+    def test_all_workflows_use_the_locked_nix_toolchain(self):
+        installer = (
+            "DeterminateSystems/nix-installer-action@"
+            "ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22"
+        )
+        workflow_directory = ROOT / ".github" / "workflows"
+        for path in sorted(workflow_directory.glob("*.yml")):
+            with self.subTest(workflow=path.name):
+                source = path.read_text()
+                self.assertIn(installer, source)
+                self.assertIn("--no-update-lock-file", source)
+                self.assertIn("nix-2.31.2-x86_64-linux.tar.xz", source)
+                self.assertIn(
+                    "source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb",
+                    source,
+                )
+                self.assertNotIn("actions/setup-go@", source)
+                self.assertNotIn("actions/setup-python@", source)
+
+    def test_flake_exposes_the_cross_platform_toolchain_contract(self):
+        flake = (ROOT / "flake.nix").read_text()
+        lock = (ROOT / "flake.lock").read_text()
+        for invariant in (
+            '"aarch64-darwin"',
+            '"x86_64-linux"',
+            "toolchain = pkgs.buildEnv",
+            "devShells = forAllSystems",
+            "default = current.pkgs.mkShellNoCC common",
+            "ci = current.pkgs.mkShellNoCC common",
+            "checks = forAllSystems",
+            "formatter = forAllSystems",
+        ):
+            self.assertIn(invariant, flake)
+        self.assertIn('"nixpkgs"', lock)
+        self.assertIn('"narHash"', lock)
+
     def test_bazelisk_uses_pinned_bazel_release(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
         justfile = (ROOT / "justfile").read_text()
         readme = (ROOT / "README.md").read_text()
         self.assertIn('USE_BAZEL_VERSION: "9.2.0"', workflow)
+        self.assertIn(
+            "bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86",
+            workflow,
+        )
         self.assertIn("USE_BAZEL_VERSION=9.2.0 bazelisk", justfile)
         self.assertIn("`--lockfile_mode=off`", readme)
         self.assertIn("`MODULE.bazel.lock`", readme)

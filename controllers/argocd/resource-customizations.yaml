@@ -9,6 +9,7 @@ data:
   users.anonymous.enabled: "false"
   exec.enabled: "false"
   statusbadge.enabled: "false"
+  application.sync.requireOverridePrivilegeForRevisionSync: "true"
   application.resourceTrackingMethod: annotation+label
   resource.respectRBAC: strict
   resource.customizations.ignoreDifferences.all: |

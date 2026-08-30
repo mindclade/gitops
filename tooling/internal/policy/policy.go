@@ -8,8 +8,10 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -62,6 +64,7 @@ const (
 	platformDeploymentGate                   = "blocked-pending-jit-05"
 	policyBindingReconcilerGate              = "blocked-pending-jit-05"
 	secretReferenceMaterializerGate          = "blocked-pending-jit-05"
+	infrastructureExportStateDigestDomain    = "mindclade.gitops.previous-infrastructure-state.v1\x00"
 	reviewedInfrastructureExportSchemaDigest = "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
 	reviewedArgoVersion                      = "v3.5.2"
 	reviewedArgoRevision                     = "e258ee23c3e52266d407572f4bcdfe7d9ed36cb5"
@@ -137,7 +140,6 @@ var argoRBACPolicyLines = []string{
 	"p, role:release-promoter, applications, sync, workers/*, allow",
 	"p, role:platform-operator, applications, get, platform/*, allow",
 	"p, role:platform-operator, applications, sync, platform/*, allow",
-	"p, role:platform-operator, applications, action/*, platform/*, allow",
 	"g, mindclade:security, role:security-auditor",
 	"g, mindclade:release-engineering, role:release-promoter",
 	"g, mindclade:platform-operations, role:platform-operator",
@@ -165,7 +167,7 @@ func addPaths(target map[string]bool, prefix string, names ...string) {
 
 func ExpectedSourceFiles() map[string]bool {
 	expected := map[string]bool{}
-	addPaths(expected, "", ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "component.yaml", "justfile")
+	addPaths(expected, "", ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile")
 	addPaths(expected, ".github", "CODEOWNERS", "dependabot.yml", "pull_request_template.md")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
 	addPaths(expected, "controllers/argocd", "namespace.yaml", "repository-credentials-reference.yaml", "notifications.yaml", "resource-customizations.yaml", "kustomization.yaml")
@@ -206,10 +208,14 @@ func actualSourceFiles(root string) (map[string]bool, error) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() && entry.Name() == ".git" {
+		name := entry.Name()
+		if entry.IsDir() && (name == ".git" || name == ".cache" || name == ".pytest_cache" || name == "__pycache__") {
 			return filepath.SkipDir
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Dir(path) == filepath.Clean(root) && (strings.HasPrefix(name, "bazel-") || name == "result") {
 			return nil
 		}
 		info, err := entry.Info()
@@ -425,7 +431,27 @@ func requireExactComponentReferences(label string, values []string, expected ...
 	return nil
 }
 
+// ValidationOptions supplies trust inputs that are intentionally kept outside
+// the desired-state repository. They are optional while every environment
+// root is inactive and mandatory before an InfrastructureExport can activate.
+type ValidationOptions struct {
+	InfrastructureExportTrustBundle       string
+	InfrastructureExportTrustBundleDigest string
+	BootstrapSourceRevision               string
+	PreviousRepositoryRoot                string
+	PreviousRepositoryRevision            string
+	PreviousInfrastructureStateDigest     string
+}
+
 func ValidateRepository(root string) error {
+	return ValidateRepositoryWithOptions(root, ValidationOptions{})
+}
+
+func ValidateRepositoryWithOptions(root string, options ValidationOptions) error {
+	infrastructureContext, err := newInfrastructureExportValidationContext(root, options)
+	if err != nil {
+		return err
+	}
 	expected := ExpectedSourceFiles()
 	actual, err := actualSourceFiles(root)
 	if err != nil {
@@ -447,8 +473,8 @@ func ValidateRepository(root string) error {
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
 	}
-	if len(expected) != 126 {
-		return fmt.Errorf("internal source manifest has %d files, expected 126", len(expected))
+	if len(expected) != 128 {
+		return fmt.Errorf("internal source manifest has %d files, expected 128", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
@@ -457,7 +483,7 @@ func ValidateRepository(root string) error {
 		return err
 	}
 	for _, environment := range release.Environments {
-		if err := ValidateEnvironment(root, environment); err != nil {
+		if err := validateEnvironment(root, environment, infrastructureContext); err != nil {
 			return err
 		}
 	}
@@ -530,6 +556,18 @@ func validateSchemaSet(root string) error {
 }
 
 func ValidateEnvironment(root, environment string) error {
+	return ValidateEnvironmentWithOptions(root, environment, ValidationOptions{})
+}
+
+func ValidateEnvironmentWithOptions(root, environment string, options ValidationOptions) error {
+	infrastructureContext, err := newInfrastructureExportValidationContext(root, options)
+	if err != nil {
+		return err
+	}
+	return validateEnvironment(root, environment, infrastructureContext)
+}
+
+func validateEnvironment(root, environment string, infrastructureContext *infrastructureExportValidationContext) error {
 	if !release.ValidEnvironment(environment) {
 		return fmt.Errorf("unknown environment %q", environment)
 	}
@@ -568,7 +606,7 @@ func ValidateEnvironment(root, environment string) error {
 	if err != nil {
 		return err
 	}
-	memberships, err := validateInfrastructureExports(documents["infrastructure-exports.yaml"], environment)
+	memberships, err := validateInfrastructureExports(documents["infrastructure-exports.yaml"], environment, infrastructureContext)
 	if err != nil {
 		return err
 	}
@@ -803,10 +841,18 @@ func validateWorkloadReleaseMetadata(document map[string]any, environment, sourc
 }
 
 func validateSchemaDocument(root, documentPath, schemaPath string) (map[string]any, error) {
-	content, err := os.ReadFile(filepath.Join(root, documentPath))
+	return validateSchemaDocumentFromRoots(root, root, documentPath, schemaPath)
+}
+
+func validateSchemaDocumentFromRoots(documentRoot, schemaRoot, documentPath, schemaPath string) (map[string]any, error) {
+	content, err := os.ReadFile(filepath.Join(documentRoot, documentPath))
 	if err != nil {
 		return nil, err
 	}
+	return validateSchemaDocumentContent(content, schemaRoot, documentPath, schemaPath)
+}
+
+func validateSchemaDocumentContent(content []byte, schemaRoot, documentPath, schemaPath string) (map[string]any, error) {
 	var document map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.UseNumber()
@@ -820,7 +866,7 @@ func validateSchemaDocument(root, documentPath, schemaPath string) (map[string]a
 		}
 		return nil, fmt.Errorf("%s has invalid trailing JSON: %w", documentPath, err)
 	}
-	schema, err := compileSchema(root, schemaPath)
+	schema, err := compileSchema(schemaRoot, schemaPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,10 +1177,14 @@ func validateConnectedEvidenceActivation(root string) error {
 }
 
 // VerifyTransition proves a requested promotion or rollback against the
-// currently admitted record in the checked-out GitOps revision. It does not
-// claim to verify external signatures; the workflow remains source-blocked
-// until that separate cryptographic verifier is implemented.
+// currently admitted record in the checked-out GitOps revision. Release
+// evidence remains source-blocked until its separate connected verifier is
+// qualified; active infrastructure exports already require bootstrap trust.
 func VerifyTransition(root, action, environment, releaseClass, component, cluster, artifactDigest, priorDigest string) error {
+	return VerifyTransitionWithOptions(root, action, environment, releaseClass, component, cluster, artifactDigest, priorDigest, ValidationOptions{})
+}
+
+func VerifyTransitionWithOptions(root, action, environment, releaseClass, component, cluster, artifactDigest, priorDigest string, options ValidationOptions) error {
 	if action != "promote" && action != "rollback" {
 		return fmt.Errorf("unsupported transition action %q", action)
 	}
@@ -1155,7 +1205,7 @@ func VerifyTransition(root, action, environment, releaseClass, component, cluste
 	if filename == "" {
 		return fmt.Errorf("unknown release class %q", releaseClass)
 	}
-	if err := ValidateEnvironment(root, environment); err != nil {
+	if err := ValidateEnvironmentWithOptions(root, environment, options); err != nil {
 		return fmt.Errorf("validate checked-out %s environment: %w", environment, err)
 	}
 	document, err := validateSchemaDocument(root, filepath.Join("environments", environment, filename), filepath.Join("schemas", "v1", environmentSchemas[filename]))
@@ -1236,10 +1286,540 @@ type infrastructureExportSignedPayload struct {
 	Spec       infrastructureExportSignedSpec `json:"spec"`
 }
 
-func validateInfrastructureExports(document map[string]any, environment string) (map[string]bool, error) {
+type infrastructureExportTrustBundleDocument struct {
+	SchemaVersion    string                                 `json:"schemaVersion"`
+	SourceRepository string                                 `json:"sourceRepository"`
+	SourceRevision   string                                 `json:"sourceRevision"`
+	Purpose          string                                 `json:"purpose"`
+	Keys             []infrastructureExportTrustKeyDocument `json:"keys"`
+}
+
+type infrastructureExportTrustKeyDocument struct {
+	Algorithm          string `json:"algorithm"`
+	KeyVersion         string `json:"keyVersion"`
+	PublicKey          string `json:"publicKey"`
+	PublicKeyDigest    string `json:"publicKeyDigest"`
+	PublicKeyPEM       string `json:"publicKeyPEM"`
+	PublicKeyPEMSHA256 string `json:"publicKeyPEMSHA256"`
+	ValidFrom          string `json:"validFrom"`
+	ValidUntil         string `json:"validUntil"`
+	Revoked            *bool  `json:"revoked"`
+}
+
+type infrastructureExportTrustAnchor struct {
+	publicKeyDER    []byte
+	publicKey       *ecdsa.PublicKey
+	publicKeyDigest string
+	validFrom       time.Time
+	validUntil      time.Time
+	revoked         bool
+}
+
+type infrastructureExportPreviousState struct {
+	backendStateDigest string
+	backendLineage     string
+	backendSerial      uint64
+}
+
+type infrastructureExportValidationContext struct {
+	now            time.Time
+	trustAnchors   map[string]infrastructureExportTrustAnchor
+	previousStates map[string]infrastructureExportPreviousState
+}
+
+func newInfrastructureExportValidationContext(root string, options ValidationOptions) (*infrastructureExportValidationContext, error) {
+	trustPath := options.InfrastructureExportTrustBundle
+	trustDigest := options.InfrastructureExportTrustBundleDigest
+	bootstrapRevision := options.BootstrapSourceRevision
+	previousRoot := options.PreviousRepositoryRoot
+	previousRevision := options.PreviousRepositoryRevision
+	previousStateDigest := options.PreviousInfrastructureStateDigest
+	inputs := []string{trustPath, trustDigest, bootstrapRevision, previousRoot, previousRevision, previousStateDigest}
+	provided := 0
+	for _, input := range inputs {
+		if input != strings.TrimSpace(input) {
+			return nil, fmt.Errorf("infrastructure trust inputs must not contain surrounding whitespace")
+		}
+		if input != "" {
+			provided++
+		}
+	}
+	context := &infrastructureExportValidationContext{now: time.Now().UTC()}
+	if provided == 0 {
+		return context, nil
+	}
+	if provided != len(inputs) {
+		return nil, infrastructureExportTrustInputsError()
+	}
+	if err := release.ValidateDigest(trustDigest); err != nil {
+		return nil, fmt.Errorf("infrastructure export trust bundle digest: %w", err)
+	}
+	if err := release.ValidateRevision(bootstrapRevision); err != nil {
+		return nil, fmt.Errorf("bootstrap source revision: %w", err)
+	}
+	if err := release.ValidateRevision(previousRevision); err != nil {
+		return nil, fmt.Errorf("previous repository revision: %w", err)
+	}
+	if err := release.ValidateDigest(previousStateDigest); err != nil {
+		return nil, fmt.Errorf("previous infrastructure state digest: %w", err)
+	}
+	currentResolved, err := resolvedDirectory(root, "repository root")
+	if err != nil {
+		return nil, err
+	}
+	previousResolved, err := resolvedDirectory(previousRoot, "previous repository root")
+	if err != nil {
+		return nil, err
+	}
+	if currentResolved == previousResolved {
+		return nil, fmt.Errorf("previous repository root must be an independently supplied snapshot, not the current repository root")
+	}
+	context.trustAnchors, err = loadInfrastructureExportTrustBundle(trustPath, trustDigest, bootstrapRevision)
+	if err != nil {
+		return nil, err
+	}
+	context.previousStates, err = loadPreviousInfrastructureExportStates(currentResolved, previousResolved, previousRevision, previousStateDigest)
+	if err != nil {
+		return nil, err
+	}
+	return context, nil
+}
+
+func infrastructureExportTrustInputsError() error {
+	return fmt.Errorf("active infrastructure exports require independently protected --infrastructure-export-trust-bundle, --infrastructure-export-trust-bundle-digest, --bootstrap-source-revision, --previous-repository-root, --previous-repository-revision, and --previous-infrastructure-state-digest inputs")
+}
+
+func resolvedDirectory(path, label string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", label, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s must be a directory", label)
+	}
+	return filepath.Clean(resolved), nil
+}
+
+func readBoundedRegularFile(path, label string, maximum int64) ([]byte, error) {
+	linkInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink != 0 || !linkInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular non-symlink file", label)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat opened %s: %w", label, err)
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(linkInfo, openedInfo) {
+		return nil, fmt.Errorf("%s changed while it was being opened", label)
+	}
+	if openedInfo.Size() > maximum {
+		return nil, fmt.Errorf("%s exceeds the %d-byte limit", label, maximum)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if int64(len(content)) > maximum {
+		return nil, fmt.Errorf("%s exceeds the %d-byte limit", label, maximum)
+	}
+	return content, nil
+}
+
+func loadInfrastructureExportTrustBundle(path, expectedDigest, expectedBootstrapRevision string) (map[string]infrastructureExportTrustAnchor, error) {
+	content, err := readBoundedRegularFile(path, "infrastructure export trust bundle", 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	rawDigest := sha256.Sum256(content)
+	actualDigest := "sha256:" + hex.EncodeToString(rawDigest[:])
+	if subtle.ConstantTimeCompare([]byte(actualDigest), []byte(expectedDigest)) != 1 {
+		return nil, fmt.Errorf("infrastructure export trust bundle raw digest %s does not equal protected digest %s", actualDigest, expectedDigest)
+	}
+	// yaml.v3 rejects duplicate mapping keys. JSON's standard decoder accepts
+	// them, so preflight the JSON subset before applying strict struct decoding.
+	var duplicateKeyCheck any
+	if err := yaml.Unmarshal(content, &duplicateKeyCheck); err != nil {
+		return nil, fmt.Errorf("infrastructure export trust bundle contains duplicate or invalid fields: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	var document infrastructureExportTrustBundleDocument
+	if err := decoder.Decode(&document); err != nil {
+		return nil, fmt.Errorf("infrastructure export trust bundle must be strict JSON: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("infrastructure export trust bundle must contain exactly one JSON document")
+		}
+		return nil, fmt.Errorf("infrastructure export trust bundle has invalid trailing JSON: %w", err)
+	}
+	if document.SchemaVersion != "v1" || document.SourceRepository != "mindclade/bootstrap" || document.Purpose != "infrastructure-export-signing" {
+		return nil, fmt.Errorf("infrastructure export trust bundle identity is not the reviewed bootstrap v1 contract")
+	}
+	if document.SourceRevision != expectedBootstrapRevision {
+		return nil, fmt.Errorf("infrastructure export trust bundle sourceRevision %s does not equal protected bootstrap revision %s", document.SourceRevision, expectedBootstrapRevision)
+	}
+	if len(document.Keys) == 0 || len(document.Keys) > 16 {
+		return nil, fmt.Errorf("infrastructure export trust bundle must contain 1 to 16 rotation keys")
+	}
+	anchors := make(map[string]infrastructureExportTrustAnchor, len(document.Keys))
+	digests := make(map[string]bool, len(document.Keys))
+	var previousKeyPrefix string
+	var previousKeyVersion uint64
+	var previousValidFrom time.Time
+	var previousValidUntil time.Time
+	for index, key := range document.Keys {
+		label := fmt.Sprintf("infrastructure export trust bundle key[%d]", index)
+		if key.Algorithm != "EC_SIGN_P256_SHA256" {
+			return nil, fmt.Errorf("%s algorithm must be EC_SIGN_P256_SHA256", label)
+		}
+		if !infrastructureExportKeyVersionPattern.MatchString(key.KeyVersion) {
+			return nil, fmt.Errorf("%s keyVersion is not a bootstrap infrastructure-export key version", label)
+		}
+		keyPrefix, keyVersion, err := splitInfrastructureExportKeyVersion(key.KeyVersion)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label, err)
+		}
+		if _, duplicate := anchors[key.KeyVersion]; duplicate {
+			return nil, fmt.Errorf("%s duplicates keyVersion %s", label, key.KeyVersion)
+		}
+		publicKeyDER, publicKey, publicKeyDigest, err := parseInfrastructureExportPublicKey(key.PublicKey, label+" public key")
+		if err != nil {
+			return nil, err
+		}
+		if subtle.ConstantTimeCompare([]byte(key.PublicKeyDigest), []byte(publicKeyDigest)) != 1 {
+			return nil, fmt.Errorf("%s publicKeyDigest does not match its canonical SPKI DER public key", label)
+		}
+		if err := validateInfrastructureExportPublicKeyPEM(key, publicKeyDER, label); err != nil {
+			return nil, err
+		}
+		if digests[publicKeyDigest] {
+			return nil, fmt.Errorf("%s duplicates publicKeyDigest %s", label, publicKeyDigest)
+		}
+		digests[publicKeyDigest] = true
+		validFrom, err := parseCanonicalInfrastructureExportTime(key.ValidFrom, label+" validFrom")
+		if err != nil {
+			return nil, err
+		}
+		validUntil, err := parseCanonicalInfrastructureExportTime(key.ValidUntil, label+" validUntil")
+		if err != nil {
+			return nil, err
+		}
+		if validUntil.Sub(validFrom) != 90*24*time.Hour {
+			return nil, fmt.Errorf("%s must declare the exact reviewed 90-day bootstrap rotation window", label)
+		}
+		if key.Revoked == nil {
+			return nil, fmt.Errorf("%s must explicitly declare revoked", label)
+		}
+		if index > 0 {
+			if keyPrefix != previousKeyPrefix {
+				return nil, fmt.Errorf("%s must retain the same bootstrap CryptoKey prefix during rotation", label)
+			}
+			if keyVersion <= previousKeyVersion {
+				return nil, fmt.Errorf("%s numeric key version must increase monotonically", label)
+			}
+			overlapStart := validFrom
+			if previousValidFrom.After(overlapStart) {
+				overlapStart = previousValidFrom
+			}
+			overlapEnd := validUntil
+			if previousValidUntil.Before(overlapEnd) {
+				overlapEnd = previousValidUntil
+			}
+			overlap := overlapEnd.Sub(overlapStart)
+			if overlap <= 0 || overlap > 24*time.Hour {
+				return nil, fmt.Errorf("%s rotation overlap with the preceding key must be greater than zero and no more than 24 hours", label)
+			}
+		}
+		anchors[key.KeyVersion] = infrastructureExportTrustAnchor{
+			publicKeyDER: publicKeyDER, publicKey: publicKey, publicKeyDigest: publicKeyDigest,
+			validFrom: validFrom, validUntil: validUntil, revoked: *key.Revoked,
+		}
+		previousKeyPrefix = keyPrefix
+		previousKeyVersion = keyVersion
+		previousValidFrom = validFrom
+		previousValidUntil = validUntil
+	}
+	return anchors, nil
+}
+
+func validateInfrastructureExportPublicKeyPEM(key infrastructureExportTrustKeyDocument, publicKeyDER []byte, label string) error {
+	publicKeyPEM := []byte(key.PublicKeyPEM)
+	if len(publicKeyPEM) == 0 || len(publicKeyPEM) > 16*1024 {
+		return fmt.Errorf("%s publicKeyPEM must contain the bounded exact bootstrap public-key PEM", label)
+	}
+	pemDigest := sha256.Sum256(publicKeyPEM)
+	expectedPEMDigest := hex.EncodeToString(pemDigest[:])
+	if subtle.ConstantTimeCompare([]byte(key.PublicKeyPEMSHA256), []byte(expectedPEMDigest)) != 1 {
+		return fmt.Errorf("%s publicKeyPEMSHA256 does not match the exact UTF-8 bootstrap PEM bytes", label)
+	}
+	block, trailing := pem.Decode(publicKeyPEM)
+	if block == nil || block.Type != "PUBLIC KEY" || len(block.Headers) != 0 || len(trailing) != 0 {
+		return fmt.Errorf("%s publicKeyPEM must contain exactly one headerless PKIX PUBLIC KEY block", label)
+	}
+	canonicalPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: block.Bytes})
+	if subtle.ConstantTimeCompare(canonicalPEM, publicKeyPEM) != 1 {
+		return fmt.Errorf("%s publicKeyPEM must use canonical PEM encoding", label)
+	}
+	if subtle.ConstantTimeCompare(block.Bytes, publicKeyDER) != 1 {
+		return fmt.Errorf("%s publicKeyPEM SPKI DER does not match publicKey and publicKeyDigest", label)
+	}
+	return nil
+}
+
+func splitInfrastructureExportKeyVersion(keyVersion string) (string, uint64, error) {
+	separator := strings.LastIndexByte(keyVersion, '/')
+	if separator < 1 || separator == len(keyVersion)-1 {
+		return "", 0, fmt.Errorf("keyVersion lacks a numeric version suffix")
+	}
+	version, err := strconv.ParseUint(keyVersion[separator+1:], 10, 64)
+	if err != nil || version == 0 {
+		return "", 0, fmt.Errorf("keyVersion has an invalid numeric version suffix")
+	}
+	return keyVersion[:separator], version, nil
+}
+
+func parseInfrastructureExportPublicKey(encoded, label string) ([]byte, *ecdsa.PublicKey, string, error) {
+	publicKeyDER, err := decodeCanonicalInfrastructureExportBase64(encoded, 64, 512, label)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	parsedKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("%s must be canonical PKIX SubjectPublicKeyInfo: %w", label, err)
+	}
+	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
+	if !ok || publicKey.Curve != elliptic.P256() {
+		return nil, nil, "", fmt.Errorf("%s must be ECDSA P-256", label)
+	}
+	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil || subtle.ConstantTimeCompare(canonicalDER, publicKeyDER) != 1 {
+		return nil, nil, "", fmt.Errorf("%s must use canonical PKIX SubjectPublicKeyInfo DER", label)
+	}
+	digest := sha256.Sum256(publicKeyDER)
+	return publicKeyDER, publicKey, "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func parseCanonicalInfrastructureExportTime(value, label string) (time.Time, error) {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil || parsed.Format(time.RFC3339) != value || !strings.HasSuffix(value, "Z") {
+		return time.Time{}, fmt.Errorf("%s must be canonical RFC3339 UTC", label)
+	}
+	return parsed, nil
+}
+
+func canonicalInfrastructureExportPayloadDigest(export map[string]any, environment string) (string, error) {
+	metadata, ok := export["metadata"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("infrastructure export metadata must be an object")
+	}
+	backendSerial, err := exactUnsignedJSONInteger(metadata["backendSerial"])
+	if err != nil {
+		return "", fmt.Errorf("infrastructure export backendSerial must be an unsigned integer")
+	}
+	spec, ok := export["spec"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("infrastructure export spec must be an object")
+	}
+	resources, err := objectArray(spec, "resources", "infrastructure export")
+	if err != nil {
+		return "", err
+	}
+	canonicalResources := make([]infrastructureExportResource, 0, len(resources))
+	for _, resource := range resources {
+		canonicalResources = append(canonicalResources, infrastructureExportResource{
+			Kind: fmt.Sprint(resource["kind"]), Name: fmt.Sprint(resource["name"]), URI: fmt.Sprint(resource["uri"]),
+		})
+	}
+	evidence, ok := spec["evidence"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("infrastructure export evidence must be an object")
+	}
+	provenanceValue, ok := evidence["provenance"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("infrastructure export provenance evidence must be an object")
+	}
+	payload := infrastructureExportSignedPayload{
+		APIVersion: fmt.Sprint(export["apiVersion"]),
+		Kind:       fmt.Sprint(export["kind"]),
+		Metadata: infrastructureExportMetadata{
+			Environment:        environment,
+			Stack:              fmt.Sprint(metadata["stack"]),
+			SourceRepository:   fmt.Sprint(metadata["sourceRepository"]),
+			SourceCommit:       fmt.Sprint(metadata["sourceCommit"]),
+			Root:               fmt.Sprint(metadata["root"]),
+			PlanDigest:         fmt.Sprint(metadata["planDigest"]),
+			ProviderLockDigest: fmt.Sprint(metadata["providerLockDigest"]),
+			BackendStateDigest: fmt.Sprint(metadata["backendStateDigest"]),
+			BackendLineage:     fmt.Sprint(metadata["backendLineage"]),
+			BackendSerial:      backendSerial,
+			SchemaDigest:       fmt.Sprint(metadata["schemaDigest"]),
+			GeneratedAt:        fmt.Sprint(metadata["generatedAt"]),
+		},
+		Spec: infrastructureExportSignedSpec{
+			Resources: canonicalResources,
+			Provenance: infrastructureExportReference{
+				URI: fmt.Sprint(provenanceValue["uri"]), Digest: fmt.Sprint(provenanceValue["digest"]),
+			},
+		},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("canonical infrastructure export payload: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func loadPreviousInfrastructureExportStates(schemaRoot, previousRoot, previousRevision, expectedDigest string) (map[string]infrastructureExportPreviousState, error) {
+	documents := make(map[string][]byte, len(release.Environments))
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(infrastructureExportStateDigestDomain))
+	writeInfrastructureExportStateDigestField(hasher, "previousRepositoryRevision", []byte(previousRevision))
+	for _, environment := range release.Environments {
+		relative := filepath.Join("environments", environment, "infrastructure-exports.yaml")
+		content, err := readBoundedRegularFile(filepath.Join(previousRoot, relative), "previous repository "+relative, 1<<20)
+		if err != nil {
+			return nil, err
+		}
+		documents[environment] = content
+		writeInfrastructureExportStateDigestField(hasher, filepath.ToSlash(relative), content)
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(actualDigest), []byte(expectedDigest)) != 1 {
+		return nil, fmt.Errorf("previous infrastructure state digest %s does not equal protected digest %s for revision %s", actualDigest, expectedDigest, previousRevision)
+	}
+
+	states := map[string]infrastructureExportPreviousState{}
+	for _, environment := range release.Environments {
+		relative := filepath.Join("environments", environment, "infrastructure-exports.yaml")
+		document, err := validateSchemaDocumentContent(documents[environment], schemaRoot, relative, filepath.Join("schemas", "v1", environmentSchemas["infrastructure-exports.yaml"]))
+		if err != nil {
+			return nil, fmt.Errorf("validate previous repository root: %w", err)
+		}
+		if document["schemaVersion"] != "v1" || document["environment"] != environment {
+			return nil, fmt.Errorf("previous repository %s has inconsistent schema or environment", relative)
+		}
+		exports, err := objectArray(document, "exports", "previous "+relative)
+		if err != nil {
+			return nil, err
+		}
+		for _, export := range exports {
+			metadata, ok := export["metadata"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("previous repository %s export metadata must be an object", relative)
+			}
+			stack := fmt.Sprint(metadata["stack"])
+			if metadata["environment"] != environment || fmt.Sprint(metadata["root"]) != "opentofu/live/"+environment+"/"+stack {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s does not match %s", stack, environment)
+			}
+			backendLineage := fmt.Sprint(metadata["backendLineage"])
+			if !infrastructureExportLineagePattern.MatchString(backendLineage) {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendLineage must be a canonical UUID", stack)
+			}
+			backendSerial, err := exactUnsignedJSONInteger(metadata["backendSerial"])
+			if err != nil {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendSerial must be an unsigned integer", stack)
+			}
+			backendStateDigest := fmt.Sprint(metadata["backendStateDigest"])
+			if err := release.ValidateDigest(backendStateDigest); err != nil {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendStateDigest: %w", stack, err)
+			}
+			identity := environment + "/" + stack
+			if _, duplicate := states[identity]; duplicate {
+				return nil, fmt.Errorf("previous repository contains duplicate infrastructure export stack %s", identity)
+			}
+			payloadDigest, err := canonicalInfrastructureExportPayloadDigest(export, environment)
+			if err != nil {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s: %w", stack, err)
+			}
+			spec, _ := export["spec"].(map[string]any)
+			evidence, _ := spec["evidence"].(map[string]any)
+			signature, ok := evidence["signature"].(map[string]any)
+			if !ok || subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["payloadDigest"])), []byte(payloadDigest)) != 1 {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s payloadDigest does not match its canonical signed payload", stack)
+			}
+			states[identity] = infrastructureExportPreviousState{
+				backendStateDigest: backendStateDigest,
+				backendLineage:     backendLineage,
+				backendSerial:      backendSerial,
+			}
+		}
+	}
+	return states, nil
+}
+
+func writeInfrastructureExportStateDigestField(writer io.Writer, label string, value []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(label)))
+	_, _ = writer.Write(length[:])
+	_, _ = writer.Write([]byte(label))
+	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
+	_, _ = writer.Write(length[:])
+	_, _ = writer.Write(value)
+}
+
+func (context *infrastructureExportValidationContext) validateState(environment, stack, backendStateDigest, backendLineage string, backendSerial uint64) error {
+	if len(context.trustAnchors) == 0 || context.previousStates == nil {
+		return infrastructureExportTrustInputsError()
+	}
+	previous, exists := context.previousStates[environment+"/"+stack]
+	if !exists {
+		return nil
+	}
+	if backendLineage != previous.backendLineage {
+		return fmt.Errorf("infrastructure export stack %s backend lineage changed; no reviewed recovery contract authorizes lineage replacement", stack)
+	}
+	if backendSerial < previous.backendSerial {
+		return fmt.Errorf("infrastructure export stack %s backend serial regressed from %d to %d", stack, previous.backendSerial, backendSerial)
+	}
+	if backendSerial == previous.backendSerial && backendStateDigest != previous.backendStateDigest {
+		return fmt.Errorf("infrastructure export stack %s reused backend serial %d with a different backend state digest", stack, backendSerial)
+	}
+	return nil
+}
+
+func (context *infrastructureExportValidationContext) validateRetainedStacks(environment string, currentStacks map[string]bool) error {
+	if context == nil || context.previousStates == nil {
+		return nil
+	}
+	prefix := environment + "/"
+	for identity := range context.previousStates {
+		if !strings.HasPrefix(identity, prefix) {
+			continue
+		}
+		stack := strings.TrimPrefix(identity, prefix)
+		if !currentStacks[stack] {
+			return fmt.Errorf("infrastructure export stack %s disappeared from %s; stack retirement requires a future reviewed tombstone contract", stack, environment)
+		}
+	}
+	return nil
+}
+
+func validateInfrastructureExports(document map[string]any, environment string, context *infrastructureExportValidationContext) (map[string]bool, error) {
 	exports, err := objectArray(document, "exports", "infrastructure-exports.yaml")
 	if err != nil {
 		return nil, err
+	}
+	if len(exports) > 0 && (context == nil || len(context.trustAnchors) == 0 || context.previousStates == nil) {
+		return nil, infrastructureExportTrustInputsError()
 	}
 	stacks := map[string]bool{}
 	resources := map[string]bool{}
@@ -1283,9 +1863,9 @@ func validateInfrastructureExports(document map[string]any, environment string) 
 			return nil, fmt.Errorf("infrastructure export stack %s backendSerial must be an unsigned integer", stack)
 		}
 		generatedAt := fmt.Sprint(metadata["generatedAt"])
-		parsed, err := time.Parse(time.RFC3339, generatedAt)
-		if err != nil || parsed.Format(time.RFC3339) != generatedAt || !strings.HasSuffix(generatedAt, "Z") {
-			return nil, fmt.Errorf("infrastructure export stack %s generatedAt must be canonical RFC3339 UTC", stack)
+		generatedAtTime, err := parseCanonicalInfrastructureExportTime(generatedAt, "infrastructure export stack "+stack+" generatedAt")
+		if err != nil {
+			return nil, err
 		}
 		spec, ok := export["spec"].(map[string]any)
 		if !ok {
@@ -1364,9 +1944,15 @@ func validateInfrastructureExports(document map[string]any, environment string) 
 		if err != nil {
 			return nil, fmt.Errorf("infrastructure export stack %s canonical payload: %w", stack, err)
 		}
-		if err := verifyInfrastructureExportSignature(signature, encodedPayload); err != nil {
+		if err := verifyInfrastructureExportSignature(signature, encodedPayload, generatedAtTime, context); err != nil {
 			return nil, fmt.Errorf("infrastructure export stack %s: %w", stack, err)
 		}
+		if err := context.validateState(environment, stack, fmt.Sprint(metadata["backendStateDigest"]), backendLineage, backendSerial); err != nil {
+			return nil, err
+		}
+	}
+	if err := context.validateRetainedStacks(environment, stacks); err != nil {
+		return nil, err
 	}
 	return memberships, nil
 }
@@ -1383,44 +1969,49 @@ func infrastructureExportResourcesSorted(resources []infrastructureExportResourc
 	return true
 }
 
-func verifyInfrastructureExportSignature(signature map[string]any, payload []byte) error {
+func verifyInfrastructureExportSignature(signature map[string]any, payload []byte, generatedAt time.Time, context *infrastructureExportValidationContext) error {
 	if fmt.Sprint(signature["algorithm"]) != "EC_SIGN_P256_SHA256" {
 		return fmt.Errorf("signature algorithm must be EC_SIGN_P256_SHA256")
 	}
-	if !infrastructureExportKeyVersionPattern.MatchString(fmt.Sprint(signature["keyVersion"])) {
+	keyVersion := fmt.Sprint(signature["keyVersion"])
+	if !infrastructureExportKeyVersionPattern.MatchString(keyVersion) {
 		return fmt.Errorf("signature keyVersion must be the exact bootstrap infrastructure-export key version")
 	}
-	publicKeyDER, err := decodeCanonicalInfrastructureExportBase64(fmt.Sprint(signature["publicKey"]), 64, 512, "signature public key")
+	anchor, trusted := context.trustAnchors[keyVersion]
+	if !trusted {
+		return fmt.Errorf("signature keyVersion %s is absent from the independently supplied bootstrap trust bundle", keyVersion)
+	}
+	if anchor.revoked {
+		return fmt.Errorf("signature keyVersion %s is revoked by the bootstrap trust bundle", keyVersion)
+	}
+	if context.now.Before(anchor.validFrom) || !context.now.Before(anchor.validUntil) {
+		return fmt.Errorf("signature keyVersion %s is outside its current bootstrap trust validity window", keyVersion)
+	}
+	if generatedAt.Before(anchor.validFrom) || !generatedAt.Before(anchor.validUntil) {
+		return fmt.Errorf("signature keyVersion %s was used outside its bootstrap trust validity window", keyVersion)
+	}
+	publicKeyDER, _, embeddedPublicKeyDigest, err := parseInfrastructureExportPublicKey(fmt.Sprint(signature["publicKey"]), "signature public key")
 	if err != nil {
 		return err
-	}
-	parsedKey, err := x509.ParsePKIXPublicKey(publicKeyDER)
-	if err != nil {
-		return fmt.Errorf("signature public key must be canonical PKIX SubjectPublicKeyInfo: %w", err)
-	}
-	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
-	if !ok || publicKey.Curve != elliptic.P256() {
-		return fmt.Errorf("signature public key must be ECDSA P-256")
-	}
-	canonicalDER, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil || subtle.ConstantTimeCompare(canonicalDER, publicKeyDER) != 1 {
-		return fmt.Errorf("signature public key must use canonical PKIX SubjectPublicKeyInfo DER")
 	}
 	signatureValue, err := decodeCanonicalInfrastructureExportBase64(fmt.Sprint(signature["value"]), 8, 256, "signature value")
 	if err != nil {
 		return err
 	}
-	keyDigest := sha256.Sum256(publicKeyDER)
-	expectedPublicKeyDigest := "sha256:" + hex.EncodeToString(keyDigest[:])
-	if subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["publicKeyDigest"])), []byte(expectedPublicKeyDigest)) != 1 {
+	declaredPublicKeyDigest := fmt.Sprint(signature["publicKeyDigest"])
+	if subtle.ConstantTimeCompare([]byte(declaredPublicKeyDigest), []byte(embeddedPublicKeyDigest)) != 1 {
 		return fmt.Errorf("signature publicKeyDigest does not match the embedded public key")
+	}
+	if subtle.ConstantTimeCompare([]byte(declaredPublicKeyDigest), []byte(anchor.publicKeyDigest)) != 1 ||
+		subtle.ConstantTimeCompare(publicKeyDER, anchor.publicKeyDER) != 1 {
+		return fmt.Errorf("signature public key does not match keyVersion %s in the independently supplied bootstrap trust bundle", keyVersion)
 	}
 	payloadHash := sha256.Sum256(payload)
 	expectedPayloadDigest := "sha256:" + hex.EncodeToString(payloadHash[:])
 	if subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["payloadDigest"])), []byte(expectedPayloadDigest)) != 1 {
 		return fmt.Errorf("signature payloadDigest does not match the canonical export payload")
 	}
-	if !ecdsa.VerifyASN1(publicKey, payloadHash[:], signatureValue) {
+	if !ecdsa.VerifyASN1(anchor.publicKey, payloadHash[:], signatureValue) {
 		return fmt.Errorf("GCP KMS ECDSA P-256 signature verification failed")
 	}
 	return nil
@@ -1671,13 +2262,14 @@ func validateArgoCoreConfig(document map[string]any, rendered bool) error {
 		return fmt.Errorf("Argo CD core ConfigMap data must be an object")
 	}
 	expected := map[string]string{
-		"admin.enabled":                                 "false",
-		"users.anonymous.enabled":                       "false",
-		"exec.enabled":                                  "false",
-		"statusbadge.enabled":                           "false",
-		"application.resourceTrackingMethod":            "annotation+label",
-		"resource.respectRBAC":                          "strict",
-		"resource.customizations.ignoreDifferences.all": "jqPathExpressions:\n  - .metadata.managedFields\n",
+		"admin.enabled":           "false",
+		"users.anonymous.enabled": "false",
+		"exec.enabled":            "false",
+		"statusbadge.enabled":     "false",
+		"application.sync.requireOverridePrivilegeForRevisionSync": "true",
+		"application.resourceTrackingMethod":                       "annotation+label",
+		"resource.respectRBAC":                                     "strict",
+		"resource.customizations.ignoreDifferences.all":            "jqPathExpressions:\n  - .metadata.managedFields\n",
 	}
 	if !rendered {
 		keys := make([]string, 0, len(expected))
@@ -1713,6 +2305,16 @@ func validateArgoRBACPolicyCSV(value any) error {
 		return fmt.Errorf("Argo CD RBAC policy.csv must be a string")
 	}
 	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	for _, line := range lines {
+		fields := strings.Split(line, ",")
+		if len(fields) != 6 || strings.TrimSpace(fields[2]) != "applications" {
+			continue
+		}
+		action := strings.TrimSpace(fields[3])
+		if action == "override" || strings.HasPrefix(action, "action/") {
+			return fmt.Errorf("Argo CD global RBAC must not grant application override or resource-action authority")
+		}
+	}
 	if len(lines) != len(argoRBACPolicyLines) {
 		return fmt.Errorf("Argo CD RBAC policy.csv must contain exactly the reviewed policy rules")
 	}
@@ -1777,6 +2379,9 @@ func validateDefaultAppProject(document map[string]any) error {
 }
 
 func validateReviewedAppProject(document map[string]any, name string) error {
+	if err := validateAppProjectApplicationAuthority(document, name); err != nil {
+		return err
+	}
 	expected, ok := reviewedAppProjectDigests[name]
 	if !ok {
 		return fmt.Errorf("AppProject %s has no reviewed semantic contract", name)
@@ -1788,6 +2393,54 @@ func validateReviewedAppProject(document map[string]any, name string) error {
 	actual := fmt.Sprintf("%x", sha256.Sum256(encoded))
 	if actual != expected {
 		return fmt.Errorf("AppProject %s differs from its reviewed semantic contract", name)
+	}
+	return nil
+}
+
+func validateAppProjectApplicationAuthority(document map[string]any, name string) error {
+	spec, ok := document["spec"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("AppProject %s spec must be an object", name)
+	}
+	rawRoles, exists := spec["roles"]
+	if !exists {
+		return nil
+	}
+	roles, ok := rawRoles.([]any)
+	if !ok {
+		return fmt.Errorf("AppProject %s roles must be an array", name)
+	}
+	for roleIndex, rawRole := range roles {
+		role, ok := rawRole.(map[string]any)
+		if !ok {
+			return fmt.Errorf("AppProject %s role[%d] must be an object", name, roleIndex)
+		}
+		policies, ok := role["policies"].([]any)
+		if !ok {
+			return fmt.Errorf("AppProject %s role[%d] policies must be an array", name, roleIndex)
+		}
+		for policyIndex, rawPolicy := range policies {
+			policy, ok := rawPolicy.(string)
+			if !ok {
+				return fmt.Errorf("AppProject %s role[%d] policy[%d] must be a string", name, roleIndex, policyIndex)
+			}
+			fields := strings.Split(policy, ",")
+			if len(fields) != 6 {
+				return fmt.Errorf("AppProject %s role[%d] policy[%d] must remain a canonical application allow rule", name, roleIndex, policyIndex)
+			}
+			for index := range fields {
+				fields[index] = strings.TrimSpace(fields[index])
+			}
+			if fields[0] != "p" || !strings.HasPrefix(fields[1], "proj:"+name+":") || fields[2] != "applications" || fields[5] != "allow" {
+				return fmt.Errorf("AppProject %s role[%d] policy[%d] must remain a canonical application allow rule", name, roleIndex, policyIndex)
+			}
+			if fields[3] != "get" && fields[3] != "sync" {
+				return fmt.Errorf("AppProject %s role[%d] policy[%d] action %q exceeds reviewed get/sync authority", name, roleIndex, policyIndex, fields[3])
+			}
+			if fields[4] != name+"/*" {
+				return fmt.Errorf("AppProject %s role[%d] policy[%d] must target only %s/*", name, roleIndex, policyIndex, name)
+			}
+		}
 	}
 	return nil
 }
@@ -2633,9 +3286,46 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	for _, invariant := range []string{"--proto-redir '=https'", "--location", "-kubernetes-version 1.34.0", `USE_BAZEL_VERSION: "9.2.0"`} {
+	for _, workflow := range []string{"pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml"} {
+		content, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
+		if err != nil {
+			return err
+		}
+		text := string(content)
+		for _, invariant := range []string{
+			"DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25",
+			"nix-2.31.2-x86_64-linux.tar.xz",
+			"source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb",
+			"--no-update-lock-file",
+		} {
+			if !strings.Contains(text, invariant) {
+				return fmt.Errorf("%s lacks locked Nix bootstrap %q", workflow, invariant)
+			}
+		}
+		for _, forbidden := range []string{"actions/setup-go@", "actions/setup-python@"} {
+			if strings.Contains(text, forbidden) {
+				return fmt.Errorf("%s bypasses the Nix toolchain with %q", workflow, forbidden)
+			}
+		}
+	}
+	for _, invariant := range []string{
+		"bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86",
+		"nix flake check --no-update-lock-file",
+		"nix develop --no-update-lock-file .#ci --command just validate",
+		"nix develop --no-update-lock-file .#ci --command just bazel-test",
+		`USE_BAZEL_VERSION: "9.2.0"`,
+	} {
 		if !strings.Contains(string(pullRequest), invariant) {
-			return fmt.Errorf("pull-request workflow lacks hardened tool bootstrap %q", invariant)
+			return fmt.Errorf("pull-request workflow lacks Nix/Bazel validation %q", invariant)
+		}
+	}
+	flake, err := os.ReadFile(filepath.Join(root, "flake.nix"))
+	if err != nil {
+		return err
+	}
+	for _, invariant := range []string{"aarch64-darwin", "x86_64-linux", "toolchain", "devShells", "default", "ci", "formatter", "checks", "toolchainCheck", "vendorHash"} {
+		if !strings.Contains(string(flake), invariant) {
+			return fmt.Errorf("flake.nix lacks toolchain contract %q", invariant)
 		}
 	}
 	justfile, err := os.ReadFile(filepath.Join(root, "justfile"))

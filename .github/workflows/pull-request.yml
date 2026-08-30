@@ -18,14 +18,6 @@ concurrency:
 
 env:
   USE_BAZEL_VERSION: "9.2.0"
-  OPA_URL: https://github.com/open-policy-agent/opa/releases/download/v1.20.1/opa_linux_amd64_static
-  OPA_SHA256: 0b3f152e61be276b70396cfbca49e39fc9d0c5089e0a8574e8f6a30f41a9187f
-  BAZELISK_URL: https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
-  BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
-  KUSTOMIZE_URL: https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz
-  KUSTOMIZE_SHA256: 029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d
-  KUBECONFORM_URL: https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
-  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
 
 jobs:
   required:
@@ -37,72 +29,43 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install pinned Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Install pinned Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         with:
-          go-version: "1.26.6"
-          check-latest: false
-          cache: false
-      - name: Install pinned Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.12"
-          check-latest: false
-      - name: Install checksummed policy and build tools
+          determinate: false
+          diagnostic-endpoint: ""
+          github-token: ""
+          kvm: false
+          nix-package-url: https://releases.nixos.org/nix/nix-2.31.2/nix-2.31.2-x86_64-linux.tar.xz
+          source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb
+          summarize: false
+          trust-runner-user: false
+      - name: Materialize locked toolchain
+        id: nix-toolchain
         shell: bash
         run: |
           set -euo pipefail
-          curl --proto '=https' --proto-redir '=https' --tlsv1.2 --location --fail --show-error --silent --output "$RUNNER_TEMP/opa" "$OPA_URL"
-          printf '%s  %s\n' "$OPA_SHA256" "$RUNNER_TEMP/opa" | sha256sum --check --strict
-          chmod 0755 "$RUNNER_TEMP/opa"
-          curl --proto '=https' --proto-redir '=https' --tlsv1.2 --location --fail --show-error --silent --output "$RUNNER_TEMP/bazelisk" "$BAZELISK_URL"
-          printf '%s  %s\n' "$BAZELISK_SHA256" "$RUNNER_TEMP/bazelisk" | sha256sum --check --strict
-          chmod 0755 "$RUNNER_TEMP/bazelisk"
-          curl --proto '=https' --proto-redir '=https' --tlsv1.2 --location --fail --show-error --silent --output "$RUNNER_TEMP/kustomize.tar.gz" "$KUSTOMIZE_URL"
-          printf '%s  %s\n' "$KUSTOMIZE_SHA256" "$RUNNER_TEMP/kustomize.tar.gz" | sha256sum --check --strict
-          tar -xzf "$RUNNER_TEMP/kustomize.tar.gz" -C "$RUNNER_TEMP" kustomize
-          chmod 0755 "$RUNNER_TEMP/kustomize"
-          curl --proto '=https' --proto-redir '=https' --tlsv1.2 --location --fail --show-error --silent --output "$RUNNER_TEMP/kubeconform.tar.gz" "$KUBECONFORM_URL"
-          printf '%s  %s\n' "$KUBECONFORM_SHA256" "$RUNNER_TEMP/kubeconform.tar.gz" | sha256sum --check --strict
-          tar -xzf "$RUNNER_TEMP/kubeconform.tar.gz" -C "$RUNNER_TEMP" kubeconform
-          chmod 0755 "$RUNNER_TEMP/kubeconform"
-          printf '%s\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          toolchain="$(nix build --no-link --no-update-lock-file --print-out-paths .#toolchain)"
+          test -x "$toolchain/bin/bazelisk"
+          printf '%s/bin\n' "$toolchain" >> "$GITHUB_PATH"
+      - name: Configure approved Bazel environment
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # v0.19.0
+        with:
+          bazelisk-cache: false
+          cache-save: false
+          disk-cache: false
+          repository-cache: false
+          token: ""
+      - name: Verify locked flake outputs
+        shell: bash
+        run: nix flake check --no-update-lock-file
       - name: Validate exact source tree
         shell: bash
-        run: test "$(git ls-files | wc -l | tr -d ' ')" = 126
-      - name: Validate Go, schemas, renders, and policies
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -z "$(gofmt -l tooling)"
-          (cd tooling && go test ./...)
-          while IFS= read -r test_file; do python3 "$test_file"; done < <(find tests -type f -name 'test_*.py' | sort)
-          opa test policy
-          (cd tooling && go run ./cmd/promotectl validate --root ..)
-      - name: Verify immutable Argo CD bootstrap
-        run: cd tooling && go run ./cmd/promotectl verify-bootstrap --root .. --fetch
-      - name: Render and validate canonical Argo CD bootstrap
-        shell: bash
-        run: |
-          set -euo pipefail
-          render_file="$RUNNER_TEMP/argocd-bootstrap.yaml"
-          kustomize build --load-restrictor=LoadRestrictionsNone controllers/argocd > "$render_file"
-          kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.34.0 "$render_file"
-          (cd tooling && go run ./cmd/promotectl validate-bootstrap --file "$render_file")
-          test "$(awk '$0 == "kind: Application" {n++} END {print n+0}' "$render_file")" = 0
-          test "$(awk '$0 == "kind: ApplicationSet" {n++} END {print n+0}' "$render_file")" = 4
-          test "$(awk '$0 == "kind: ExternalSecret" {n++} END {print n+0}' "$render_file")" = 0
-          awk '/^[[:space:]]*image:/ {seen++; if ($2 !~ /@sha256:[0-9a-f]{64}$/) bad=1} END {exit !(seen > 0 && !bad)}' "$render_file"
-          mkdir "$RUNNER_TEMP/bootstrap-objects"
-          csplit -s -f "$RUNNER_TEMP/bootstrap-objects/object-" "$render_file" '/^---$/' '{*}'
-          while IFS= read -r object_file; do
-            test "$(opa eval --format raw --data policy/secret_reference.rego --input "$object_file" 'count(data.mindclade.gitops.secret_reference.deny)')" = 0
-          done < <(find "$RUNNER_TEMP/bootstrap-objects" -type f -size +0c | sort)
-      - name: Verify Bazel graph
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/bazelisk" --output_base="$RUNNER_TEMP/bazel-output" test \
-            --lockfile_mode=off --symlink_prefix="$RUNNER_TEMP/bazel-" //...
+        run: test "$(git ls-files | wc -l | tr -d ' ')" = 128
+      - name: Validate source, schemas, renders, and policies
+        run: nix develop --no-update-lock-file .#ci --command just validate
+      - name: Verify Bazel graph with the Nix-provided Bazelisk
+        run: nix develop --no-update-lock-file .#ci --command just bazel-test
       - name: Reject generated source drift
         shell: bash
         run: test -z "$(git status --porcelain)"

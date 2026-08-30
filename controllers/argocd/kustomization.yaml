@@ -59,7 +59,6 @@ patches:
           p, role:release-promoter, applications, sync, workers/*, allow
           p, role:platform-operator, applications, get, platform/*, allow
           p, role:platform-operator, applications, sync, platform/*, allow
-          p, role:platform-operator, applications, action/*, platform/*, allow
           g, mindclade:security, role:security-auditor
           g, mindclade:release-engineering, role:release-promoter
           g, mindclade:platform-operations, role:platform-operator

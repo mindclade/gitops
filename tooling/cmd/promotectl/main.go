@@ -126,6 +126,12 @@ func rollbackCommand(arguments []string) error {
 func transitionCommand(arguments []string) error {
 	flags := flag.NewFlagSet("verify-transition", flag.ContinueOnError)
 	root := flags.String("root", ".", "repository root")
+	trustBundle := flags.String("infrastructure-export-trust-bundle", "", "independently supplied bootstrap infrastructure-export trust bundle")
+	trustBundleDigest := flags.String("infrastructure-export-trust-bundle-digest", "", "protected sha256 digest of the raw infrastructure-export trust bundle")
+	bootstrapRevision := flags.String("bootstrap-source-revision", "", "protected bootstrap source revision that emitted the trust bundle")
+	previousRoot := flags.String("previous-repository-root", "", "independently supplied previous GitOps repository snapshot")
+	previousRevision := flags.String("previous-repository-revision", "", "protected previous GitOps revision bound to the replay checkpoint")
+	previousStateDigest := flags.String("previous-infrastructure-state-digest", "", "protected digest of the previous InfrastructureExport replay checkpoint")
 	action := flags.String("action", "", "promote or rollback")
 	environment := flags.String("environment", "", "target environment")
 	releaseClass := flags.String("release-class", "", "platform, service, or worker")
@@ -136,7 +142,17 @@ func transitionCommand(arguments []string) error {
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	return policy.VerifyTransition(*root, *action, *environment, *releaseClass, *component, *cluster, *artifact, *prior)
+	return policy.VerifyTransitionWithOptions(
+		*root, *action, *environment, *releaseClass, *component, *cluster, *artifact, *prior,
+		policy.ValidationOptions{
+			InfrastructureExportTrustBundle:       *trustBundle,
+			InfrastructureExportTrustBundleDigest: *trustBundleDigest,
+			BootstrapSourceRevision:               *bootstrapRevision,
+			PreviousRepositoryRoot:                *previousRoot,
+			PreviousRepositoryRevision:            *previousRevision,
+			PreviousInfrastructureStateDigest:     *previousStateDigest,
+		},
+	)
 }
 
 func bootstrapProvenance(path string) (map[string]string, error) {
@@ -184,8 +200,21 @@ func main() {
 	case "validate":
 		flags := flag.NewFlagSet("validate", flag.ExitOnError)
 		root := flags.String("root", ".", "repository root")
+		trustBundle := flags.String("infrastructure-export-trust-bundle", "", "independently supplied bootstrap infrastructure-export trust bundle")
+		trustBundleDigest := flags.String("infrastructure-export-trust-bundle-digest", "", "protected sha256 digest of the raw infrastructure-export trust bundle")
+		bootstrapRevision := flags.String("bootstrap-source-revision", "", "protected bootstrap source revision that emitted the trust bundle")
+		previousRoot := flags.String("previous-repository-root", "", "independently supplied previous GitOps repository snapshot")
+		previousRevision := flags.String("previous-repository-revision", "", "protected previous GitOps revision bound to the replay checkpoint")
+		previousStateDigest := flags.String("previous-infrastructure-state-digest", "", "protected digest of the previous InfrastructureExport replay checkpoint")
 		_ = flags.Parse(os.Args[2:])
-		if err := policy.ValidateRepository(*root); err != nil {
+		if err := policy.ValidateRepositoryWithOptions(*root, policy.ValidationOptions{
+			InfrastructureExportTrustBundle:       *trustBundle,
+			InfrastructureExportTrustBundleDigest: *trustBundleDigest,
+			BootstrapSourceRevision:               *bootstrapRevision,
+			PreviousRepositoryRoot:                *previousRoot,
+			PreviousRepositoryRevision:            *previousRevision,
+			PreviousInfrastructureStateDigest:     *previousStateDigest,
+		}); err != nil {
 			fail(err)
 		}
 		fmt.Println("gitops source validation passed")

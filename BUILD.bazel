@@ -9,24 +9,90 @@ exports_files([
 ])
 
 filegroup(
-    name = "desired_state",
+    name = "all_yaml_sources",
     srcs = glob([
         "controllers/**/*.yaml",
         "environments/**/*.yaml",
         "platform/**/*.yaml",
         "projects/**/*.yaml",
-        "schemas/**/*.json",
     ]),
 )
 
 filegroup(
-    name = "rego_policy",
-    srcs = glob(["policy/**/*.rego"]),
+    name = "development_render_sources",
+    srcs = glob(["environments/development/*.yaml"]),
 )
 
 filegroup(
-    name = "workflow_contracts",
-    srcs = glob([".github/workflows/*.yml"]),
+    name = "staging_render_sources",
+    srcs = glob(["environments/staging/*.yaml"]),
+)
+
+filegroup(
+    name = "production_render_sources",
+    srcs = [":all_yaml_sources"],
+)
+
+filegroup(
+    name = "restricted_render_sources",
+    srcs = glob(["environments/restricted/*.yaml"]) + [
+        "projects/restricted.appproject.yaml",
+    ],
+)
+
+filegroup(
+    name = "evidence_chain_sources",
+    srcs = [
+        ".github/workflows/promotion.yml",
+        "schemas/v1/promotion_receipt.schema.json",
+    ],
+)
+
+filegroup(
+    name = "partial_sync_sources",
+    srcs = [":all_yaml_sources"] + glob(["schemas/v1/*.schema.json"]),
+)
+
+filegroup(
+    name = "previous_digest_sources",
+    srcs = [
+        ".github/workflows/promotion.yml",
+        ".github/workflows/rollback-verification.yml",
+        "runbooks/emergency-rollback.md",
+        "schemas/v1/promotion_receipt.schema.json",
+        "//tooling:receipt_contract_source",
+    ],
+)
+
+filegroup(
+    name = "repository_source",
+    srcs = [
+        ".editorconfig",
+        ".github/CODEOWNERS",
+        ".github/dependabot.yml",
+        ".github/pull_request_template.md",
+        ".gitignore",
+        "BUILD.bazel",
+        "LICENSE",
+        "MODULE.bazel",
+        "README.md",
+        "SECURITY.md",
+        "component.yaml",
+        "flake.lock",
+        "flake.nix",
+        "justfile",
+        "//tooling:repository_source",
+    ] + glob([
+        ".github/workflows/*.yml",
+        "controllers/**/*.yaml",
+        "environments/**/*.yaml",
+        "platform/**/*.yaml",
+        "policy/**/*.rego",
+        "projects/**/*.yaml",
+        "runbooks/*.md",
+        "schemas/**/*.json",
+        "tests/**/*.py",
+    ]),
 )
 
 _PYTHON_TESTS = {
@@ -41,22 +107,39 @@ _PYTHON_TESTS = {
     "live_object_diff_test": "tests/drift/test_live_object_diff.py",
 }
 
-_PROMOTECTL_TESTS = ["evidence_chain_test", "schema_compatibility_test"]
+_PROMOTECTL_TESTS = [
+    "evidence_chain_test",
+    "schema_compatibility_test",
+]
+
+_PYTHON_TEST_DATA = {
+    "development_render_test": ":development_render_sources",
+    "staging_render_test": ":staging_render_sources",
+    "production_render_test": ":production_render_sources",
+    "restricted_render_test": ":restricted_render_sources",
+    "evidence_chain_test": ":evidence_chain_sources",
+    "schema_compatibility_test": ":repository_source",
+    "partial_sync_test": ":partial_sync_sources",
+    "previous_digest_test": ":previous_digest_sources",
+    "live_object_diff_test": ":repository_source",
+}
 
 [
     py_test(
         name = name,
+        size = "medium" if name == "schema_compatibility_test" else "small",
         srcs = [src],
-        data = [
-            ":desired_state",
-            ":rego_policy",
-            ":workflow_contracts",
-            "//tooling:test_contract_sources",
-        ] + (["//tooling:promotectl"] if name in _PROMOTECTL_TESTS else []),
-        env = {"PROMOTECTL_RUNFILE": "$(rootpath //tooling:promotectl)"} if name in _PROMOTECTL_TESTS else {},
+        data = [_PYTHON_TEST_DATA[name]] + (["//tooling:promotectl"] if name in _PROMOTECTL_TESTS else []),
+        env = {
+            "GITOPS_SOURCE_RUNFILES": "$(rootpaths %s)" % _PYTHON_TEST_DATA[name],
+            "PROMOTECTL_RUNFILE": "$(rootpath //tooling:promotectl)",
+        } if name in _PROMOTECTL_TESTS else {
+            "GITOPS_SOURCE_RUNFILES": "$(rootpaths %s)" % _PYTHON_TEST_DATA[name],
+        },
         legacy_create_init = 0,
         main = src,
         python_version = "PY3",
+        tags = ["external"] if name == "live_object_diff_test" else [],
     )
     for name, src in _PYTHON_TESTS.items()
 ]
