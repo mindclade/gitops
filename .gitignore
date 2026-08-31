@@ -1,6 +1,8 @@
 # Bazel convenience links and local caches.
 /bazel-*
 /.cache/
+/result
+/result-*
 
 # Local test and language output.
 __pycache__/
@@ -22,3 +24,5 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.vscode/
+!.vscode/*.json

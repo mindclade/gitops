@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportGeneralTypeIssues=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import base64
 import copy
 import hashlib
@@ -9,8 +10,8 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
-from functools import lru_cache
+from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 
 
@@ -32,17 +33,19 @@ def _repository_root():
 
 ROOT, _ROOT_TEMPORARY = _repository_root()
 INFRASTRUCTURE_EXPORT_PRODUCER_COMMIT = "e80be3f354e61c518ae347bf393f35fb368fc158"
-INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST = "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
+INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST = (
+    "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
+)
 BOOTSTRAP_TEST_REVISION = "b" * 40
 PREVIOUS_TEST_REVISION = "a" * 40
-TEST_VALIDATION_TIME = datetime.now(timezone.utc).replace(microsecond=0)
+TEST_VALIDATION_TIME = datetime.now(UTC).replace(microsecond=0)
 
 
 def _canonical_time(value):
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-@lru_cache(maxsize=None)
+@cache
 def _p256_sign(
     message,
     key_seed=b"mindclade-test-p256-key",
@@ -91,7 +94,9 @@ def _p256_sign(
     scalar = int.from_bytes(hashlib.sha256(key_seed).digest(), "big") % (order - 1) + 1
     public_x, public_y = multiply(base, scalar)
     uncompressed = b"\x04" + public_x.to_bytes(32, "big") + public_y.to_bytes(32, "big")
-    public_key = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    public_key = (
+        bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200") + uncompressed
+    )
     digest = hashlib.sha256(message).digest()
     nonce = int.from_bytes(hashlib.sha256(nonce_seed + digest).digest(), "big") % (order - 1) + 1
     nonce_x, _ = multiply(base, nonce)
@@ -110,7 +115,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
         if runfile:
             candidate = Path(runfile)
             if not candidate.is_absolute():
-                candidate = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] / candidate
+                candidate = (
+                    Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] / candidate
+                )
             if candidate.is_file():
                 cls.promotectl = candidate
                 return
@@ -182,8 +189,28 @@ class SchemaCompatibilityTest(unittest.TestCase):
         workload = json.loads((ROOT / "schemas/v1/workload_releases.schema.json").read_text())
         release_item = workload["properties"]["releases"]["items"]
         evidence = release_item["properties"]["evidence"]
-        self.assertTrue({"signature", "sbom", "provenance", "vulnerabilityScan", "evaluation", "signer", "issuer"} <= set(evidence["required"]))
-        self.assertTrue({"releaseRecordDigest", "promotionReceiptDigest", "governanceEvidenceDigest", "desiredStateRevision", "desiredStatePath"} <= set(release_item["required"]))
+        self.assertTrue(
+            {
+                "signature",
+                "sbom",
+                "provenance",
+                "vulnerabilityScan",
+                "evaluation",
+                "signer",
+                "issuer",
+            }
+            <= set(evidence["required"])
+        )
+        self.assertTrue(
+            {
+                "releaseRecordDigest",
+                "promotionReceiptDigest",
+                "governanceEvidenceDigest",
+                "desiredStateRevision",
+                "desiredStatePath",
+            }
+            <= set(release_item["required"])
+        )
         signed_policy = (ROOT / "policy/signed_release.rego").read_text()
         self.assertIn('"vulnerabilityScan"', signed_policy)
         self.assertIn('"promotionReceiptDigest"', signed_policy)
@@ -195,10 +222,18 @@ class SchemaCompatibilityTest(unittest.TestCase):
         export = schema["$defs"]["infrastructureExport"]
         metadata = export["properties"]["metadata"]
         self.assertFalse(metadata["additionalProperties"])
-        self.assertTrue({
-            "providerLockDigest", "backendStateDigest", "backendLineage", "backendSerial",
-        } <= set(metadata["required"]))
-        self.assertEqual(metadata["properties"]["schemaDigest"]["const"], INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST)
+        self.assertTrue(
+            {
+                "providerLockDigest",
+                "backendStateDigest",
+                "backendLineage",
+                "backendSerial",
+            }
+            <= set(metadata["required"])
+        )
+        self.assertEqual(
+            metadata["properties"]["schemaDigest"]["const"], INFRASTRUCTURE_EXPORT_SCHEMA_DIGEST
+        )
         self.assertIn("pattern", metadata["properties"]["sourceCommit"])
         self.assertNotIn("const", metadata["properties"]["sourceCommit"])
         resources = export["properties"]["spec"]["properties"]["resources"]
@@ -235,9 +270,18 @@ class SchemaCompatibilityTest(unittest.TestCase):
         canonical_metadata = {
             field: metadata[field]
             for field in (
-                "environment", "stack", "sourceRepository", "sourceCommit", "root",
-                "planDigest", "providerLockDigest", "backendStateDigest", "backendLineage",
-                "backendSerial", "schemaDigest", "generatedAt",
+                "environment",
+                "stack",
+                "sourceRepository",
+                "sourceCommit",
+                "root",
+                "planDigest",
+                "providerLockDigest",
+                "backendStateDigest",
+                "backendLineage",
+                "backendSerial",
+                "schemaDigest",
+                "generatedAt",
             )
         }
         provenance = export["spec"]["evidence"]["provenance"]
@@ -264,7 +308,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
     def _write_infrastructure_trust_bundle(root, signatures, repin=True):
         keys = []
         active_start = TEST_VALIDATION_TIME.replace(
-            hour=0, minute=0, second=0, microsecond=0,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         ) - timedelta(days=1)
         for index, signature in enumerate(signatures):
             valid_from = active_start - timedelta(days=89 * (len(signatures) - index - 1))
@@ -272,20 +319,26 @@ class SchemaCompatibilityTest(unittest.TestCase):
             encoded_der = base64.b64encode(public_key_der).decode("ascii")
             public_key_pem = (
                 "-----BEGIN PUBLIC KEY-----\n"
-                + "\n".join(encoded_der[offset:offset + 64] for offset in range(0, len(encoded_der), 64))
+                + "\n".join(
+                    encoded_der[offset : offset + 64] for offset in range(0, len(encoded_der), 64)
+                )
                 + "\n-----END PUBLIC KEY-----\n"
             )
-            keys.append({
-                "algorithm": "EC_SIGN_P256_SHA256",
-                "keyVersion": signature["keyVersion"],
-                "publicKey": signature["publicKey"],
-                "publicKeyDigest": signature["publicKeyDigest"],
-                "publicKeyPEM": public_key_pem,
-                "publicKeyPEMSHA256": hashlib.sha256(public_key_pem.encode("utf-8")).hexdigest(),
-                "validFrom": _canonical_time(valid_from),
-                "validUntil": _canonical_time(valid_from + timedelta(days=90)),
-                "revoked": False,
-            })
+            keys.append(
+                {
+                    "algorithm": "EC_SIGN_P256_SHA256",
+                    "keyVersion": signature["keyVersion"],
+                    "publicKey": signature["publicKey"],
+                    "publicKeyDigest": signature["publicKeyDigest"],
+                    "publicKeyPEM": public_key_pem,
+                    "publicKeyPEMSHA256": hashlib.sha256(
+                        public_key_pem.encode("utf-8")
+                    ).hexdigest(),
+                    "validFrom": _canonical_time(valid_from),
+                    "validUntil": _canonical_time(valid_from + timedelta(days=90)),
+                    "revoked": False,
+                }
+            )
         bundle = {
             "schemaVersion": "v1",
             "sourceRepository": "mindclade/bootstrap",
@@ -327,19 +380,27 @@ class SchemaCompatibilityTest(unittest.TestCase):
             relative = f"environments/{environment}/infrastructure-exports.yaml"
             write_field(relative, (previous_root / relative).read_bytes())
         digest = "sha256:" + hasher.hexdigest()
-        (previous_root.parent / "previous-infrastructure-state-digest.txt").write_text(digest + "\n")
+        (previous_root.parent / "previous-infrastructure-state-digest.txt").write_text(
+            digest + "\n"
+        )
         return digest
 
     @staticmethod
     def _trust_arguments(root):
         parent = root.parent
         return [
-            "--infrastructure-export-trust-bundle", str(parent / "infrastructure-export-trust-bundle.json"),
-            "--infrastructure-export-trust-bundle-digest", (parent / "infrastructure-export-trust-bundle-digest.txt").read_text().strip(),
-            "--bootstrap-source-revision", (parent / "bootstrap-source-revision.txt").read_text().strip(),
-            "--previous-repository-root", str(parent / "previous-gitops"),
-            "--previous-repository-revision", (parent / "previous-repository-revision.txt").read_text().strip(),
-            "--previous-infrastructure-state-digest", (parent / "previous-infrastructure-state-digest.txt").read_text().strip(),
+            "--infrastructure-export-trust-bundle",
+            str(parent / "infrastructure-export-trust-bundle.json"),
+            "--infrastructure-export-trust-bundle-digest",
+            (parent / "infrastructure-export-trust-bundle-digest.txt").read_text().strip(),
+            "--bootstrap-source-revision",
+            (parent / "bootstrap-source-revision.txt").read_text().strip(),
+            "--previous-repository-root",
+            str(parent / "previous-gitops"),
+            "--previous-repository-revision",
+            (parent / "previous-repository-revision.txt").read_text().strip(),
+            "--previous-infrastructure-state-digest",
+            (parent / "previous-infrastructure-state-digest.txt").read_text().strip(),
         ]
 
     @staticmethod
@@ -459,16 +520,79 @@ class SchemaCompatibilityTest(unittest.TestCase):
             "governanceEvidenceDigest": self._digest("1"),
             "configurationDigest": self._digest("2"),
             "evidence": {**evidence, "evaluation": self._digest("3")},
-            "rollout": {"strategy": "manual", "initialPercent": initial_percent, "automaticPromotion": False},
+            "rollout": {
+                "strategy": "manual",
+                "initialPercent": initial_percent,
+                "automaticPromotion": False,
+            },
         }
         documents = {
-            "cluster-set.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "clusters": [cluster]},
-            "infrastructure-exports.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "exports": [infrastructure_export]},
-            "platform-releases.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "releases": [platform_release]},
-            "service-releases.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "releaseClass": "service", "releases": [workload_release]},
-            "worker-releases.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "releaseClass": "worker", "releases": [{**workload_release, "component": "gpu-worker", "namespace": "workers", "desiredStatePath": f"environments/{environment}/workers/gpu-worker"}]},
-            "policy-bindings.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "bindings": [{"name": "baseline", "policyDigest": self._digest("4"), "enforcement": "deny", "namespaces": ["services", "workers"]}]},
-            "secret-references.yaml": {"schemaVersion": "v1", "environment": environment, "active": True, "references": [{"name": "service-runtime", "namespace": "services", "externalSecret": "service-runtime", "storeRef": "qualified-store", "purpose": "Runtime credential reference only"}]},
+            "cluster-set.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "clusters": [cluster],
+            },
+            "infrastructure-exports.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "exports": [infrastructure_export],
+            },
+            "platform-releases.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "releases": [platform_release],
+            },
+            "service-releases.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "releaseClass": "service",
+                "releases": [workload_release],
+            },
+            "worker-releases.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "releaseClass": "worker",
+                "releases": [
+                    {
+                        **workload_release,
+                        "component": "gpu-worker",
+                        "namespace": "workers",
+                        "desiredStatePath": f"environments/{environment}/workers/gpu-worker",
+                    }
+                ],
+            },
+            "policy-bindings.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "bindings": [
+                    {
+                        "name": "baseline",
+                        "policyDigest": self._digest("4"),
+                        "enforcement": "deny",
+                        "namespaces": ["services", "workers"],
+                    }
+                ],
+            },
+            "secret-references.yaml": {
+                "schemaVersion": "v1",
+                "environment": environment,
+                "active": True,
+                "references": [
+                    {
+                        "name": "service-runtime",
+                        "namespace": "services",
+                        "externalSecret": "service-runtime",
+                        "storeRef": "qualified-store",
+                        "purpose": "Runtime credential reference only",
+                    }
+                ],
+            },
         }
         for name, document in documents.items():
             (directory / name).write_text(json.dumps(document, separators=(",", ":")) + "\n")
@@ -563,8 +687,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             resource_prefix = "  - https://raw.githubusercontent.com/argoproj/argo-cd/"
             lines = text.splitlines()
             resource_index = next(
-                index for index, line in enumerate(lines)
-                if line.startswith(resource_prefix)
+                index for index, line in enumerate(lines) if line.startswith(resource_prefix)
             )
             lines[resource_index] = lines[resource_index].replace(
                 "/manifests/install.yaml",
@@ -598,8 +721,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "    digest: sha256:e2aadfae709d904e87f46ba4aa49601d827b3022db22cd4d03aae816a2e7097b\n"
             )
             duplicate = marker + (
-                "  - name: quay.io/argoproj/argocd\n"
-                f"    digest: {self._digest('9')}\n"
+                f"  - name: quay.io/argoproj/argocd\n    digest: {self._digest('9')}\n"
             )
             self.assertEqual(text.count(marker), 1)
             path.write_text(text.replace(marker, duplicate))
@@ -636,7 +758,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 with self.subTest(command=command[1]):
                     result = subprocess.run(command, capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn("upstream version, revision, and checksum must equal", result.stderr)
+                    self.assertIn(
+                        "upstream version, revision, and checksum must equal", result.stderr
+                    )
         finally:
             directory.cleanup()
 
@@ -706,10 +830,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "destination",
                 "projects/platform.appproject.yaml",
                 "  destinations: []",
-                "  # destinations: []\n"
-                "  destinations:\n"
-                '    - namespace: "*"\n'
-                '      server: "*"',
+                '  # destinations: []\n  destinations:\n    - namespace: "*"\n      server: "*"',
                 "must have no destinations",
             ),
             (
@@ -731,8 +852,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "local-account",
                 "controllers/argocd/resource-customizations.yaml",
                 '  statusbadge.enabled: "false"',
-                '  statusbadge.enabled: "false"\n'
-                "  accounts.backdoor: apiKey, login",
+                '  statusbadge.enabled: "false"\n  accounts.backdoor: apiKey, login',
                 'contains undeclared field "accounts.backdoor"',
             ),
             (
@@ -746,16 +866,14 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "premature-sso-url",
                 "controllers/argocd/resource-customizations.yaml",
                 '  statusbadge.enabled: "false"',
-                '  statusbadge.enabled: "false"\n'
-                "  url: https://argocd.example.invalid",
+                '  statusbadge.enabled: "false"\n  url: https://argocd.example.invalid',
                 'contains undeclared field "url"',
             ),
             (
                 "premature-dex-configuration",
                 "controllers/argocd/resource-customizations.yaml",
                 '  statusbadge.enabled: "false"',
-                '  statusbadge.enabled: "false"\n'
-                '  dex.config: "{}"',
+                '  statusbadge.enabled: "false"\n  dex.config: "{}"',
                 'contains undeclared field "dex.config"',
             ),
             (
@@ -808,9 +926,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             (
                 "server-patch-multiple-documents",
                 "controllers/argocd/kustomization.yaml",
-                "      - op: replace\n"
-                "        path: /spec/replicas\n"
-                "        value: 2",
+                "      - op: replace\n        path: /spec/replicas\n        value: 2",
                 "      - op: replace\n"
                 "        path: /spec/replicas\n"
                 "        value: 2\n"
@@ -879,21 +995,18 @@ class SchemaCompatibilityTest(unittest.TestCase):
             (
                 "fail-on-shared-resource",
                 "          - FailOnSharedResource=true",
-                "          # - FailOnSharedResource=true\n"
-                "          - Replace=true",
+                "          # - FailOnSharedResource=true\n          - Replace=true",
                 "syncPolicy.syncOptions",
             ),
             (
                 "component-path",
                 "        path: '{{.desiredStatePath}}'",
-                "        # path: '{{.desiredStatePath}}'\n"
-                "        path: 'environments/development'",
+                "        # path: '{{.desiredStatePath}}'\n        path: 'environments/development'",
                 "source repoURL, targetRevision, and path must remain canonical",
             ),
             (
                 "image-binding",
-                "          images:\n"
-                "            - '{{.component}}={{.artifact}}'",
+                "          images:\n            - '{{.component}}={{.artifact}}'",
                 "          # images:\n"
                 "          #   - '{{.component}}={{.artifact}}'\n"
                 "          images: []",
@@ -929,35 +1042,74 @@ class SchemaCompatibilityTest(unittest.TestCase):
             self.skipTest("Go toolchain is unavailable")
 
         cases = {
-            "wrong-identity": lambda text: text.replace("  name: gitops", "  name: another-component"),
+            "wrong-identity": lambda text: text.replace(
+                "  name: gitops", "  name: another-component"
+            ),
             "wrong-repository": lambda text: text.replace("mindclade/gitops", "fork/gitops"),
-            "wrong-type": lambda text: text.replace("  type: deployment-control-plane", "  type: service"),
-            "wrong-lifecycle": lambda text: text.replace("  lifecycle: pre-production", "  lifecycle: production"),
-            "wrong-owner": lambda text: text.replace("  owner: platform-operations", "  owner: release-engineering"),
-            "wrong-maturity": lambda text: text.replace("  maturity: pre-production", "  maturity: production"),
-            "wrong-repository-class": lambda text: text.replace("  repository_class: deployment-source", "  repository_class: product-source"),
-            "wrong-data-classification": lambda text: text.replace("  data_classification: public", "  data_classification: confidential"),
-            "premature-production-authority": lambda text: text.replace("  production_authority: false", "  production_authority: true"),
-            "wrong-trust-tier": lambda text: text.replace("mindclade.dev/trust-tier: deployment-control", "mindclade.dev/trust-tier: application"),
-            "wrong-recovery-tier": lambda text: text.replace("mindclade.dev/recovery-tier: isolated-git", "mindclade.dev/recovery-tier: none"),
-            "missing-security-reviewer": lambda text: text.replace("  security_reviewers:\n    - security\n", ""),
+            "wrong-type": lambda text: text.replace(
+                "  type: deployment-control-plane", "  type: service"
+            ),
+            "wrong-lifecycle": lambda text: text.replace(
+                "  lifecycle: pre-production", "  lifecycle: production"
+            ),
+            "wrong-owner": lambda text: text.replace(
+                "  owner: platform-operations", "  owner: release-engineering"
+            ),
+            "wrong-maturity": lambda text: text.replace(
+                "  maturity: pre-production", "  maturity: production"
+            ),
+            "wrong-repository-class": lambda text: text.replace(
+                "  repository_class: deployment-source", "  repository_class: product-source"
+            ),
+            "wrong-data-classification": lambda text: text.replace(
+                "  data_classification: public", "  data_classification: confidential"
+            ),
+            "premature-production-authority": lambda text: text.replace(
+                "  production_authority: false", "  production_authority: true"
+            ),
+            "wrong-trust-tier": lambda text: text.replace(
+                "mindclade.dev/trust-tier: deployment-control",
+                "mindclade.dev/trust-tier: application",
+            ),
+            "wrong-recovery-tier": lambda text: text.replace(
+                "mindclade.dev/recovery-tier: isolated-git", "mindclade.dev/recovery-tier: none"
+            ),
+            "missing-security-reviewer": lambda text: text.replace(
+                "  security_reviewers:\n    - security\n", ""
+            ),
             "empty-dependencies": lambda text: text.replace(
                 "  dependencies:\n    - component:infrastructure-live\n    - component:mindclade",
                 "  dependencies: []",
             ),
-            "invalid-dependency": lambda text: text.replace("    - component:mindclade", "    - mindclade"),
-            "wrong-dependency": lambda text: text.replace("component:mindclade", "component:untrusted-source"),
+            "invalid-dependency": lambda text: text.replace(
+                "    - component:mindclade", "    - mindclade"
+            ),
+            "wrong-dependency": lambda text: text.replace(
+                "component:mindclade", "component:untrusted-source"
+            ),
             "empty-provides": lambda text: text.replace(
                 "  provides:\n    - cluster-desired-state-v1\n    - promotion-receipt-v1\n    - rollback-evidence-v1",
                 "  provides: []",
             ),
-            "wrong-provided-contract": lambda text: text.replace("rollback-evidence-v1", "mutable-tags-v1"),
-            "wrong-consumer": lambda text: text.replace("component:argocd", "component:untrusted-controller"),
-            "wrong-release-strategy": lambda text: text.replace("    strategy: protected-digest-promotion", "    strategy: tag-promotion"),
-            "wrong-release-artifact": lambda text: text.replace("    artifact: source-commit", "    artifact: image-tag"),
-            "mutable-release": lambda text: text.replace("    immutable: true", "    immutable: false"),
+            "wrong-provided-contract": lambda text: text.replace(
+                "rollback-evidence-v1", "mutable-tags-v1"
+            ),
+            "wrong-consumer": lambda text: text.replace(
+                "component:argocd", "component:untrusted-controller"
+            ),
+            "wrong-release-strategy": lambda text: text.replace(
+                "    strategy: protected-digest-promotion", "    strategy: tag-promotion"
+            ),
+            "wrong-release-artifact": lambda text: text.replace(
+                "    artifact: source-commit", "    artifact: image-tag"
+            ),
+            "mutable-release": lambda text: text.replace(
+                "    immutable: true", "    immutable: false"
+            ),
             "missing-evidence": lambda text: text.replace("      - policy-verification\n", ""),
-            "unknown-field": lambda text: text.replace("  owner: platform-operations", "  owner: platform-operations\n  undocumented: true"),
+            "unknown-field": lambda text: text.replace(
+                "  owner: platform-operations", "  owner: platform-operations\n  undocumented: true"
+            ),
             "multiple-documents": lambda text: text + "---\napiVersion: v1\nkind: ConfigMap\n",
         }
         for name, mutate in cases.items():
@@ -992,7 +1144,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
+            self.assertIn(
+                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                result.stderr,
+            )
         finally:
             directory.cleanup()
 
@@ -1018,7 +1173,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verification is pending JIT-09", result.stderr)
+            self.assertIn(
+                "external signature and attestation verification is pending JIT-09", result.stderr
+            )
             self.assertNotIn("payloadDigest", result.stderr)
         finally:
             directory.cleanup()
@@ -1049,7 +1206,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     path.write_text(json.dumps(document, separators=(",", ":")) + "\n")
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertNotIn("external signature and attestation verification is pending JIT-09", result.stderr)
+                    self.assertNotIn(
+                        "external signature and attestation verification is pending JIT-09",
+                        result.stderr,
+                    )
                 finally:
                     directory.cleanup()
 
@@ -1071,7 +1231,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                         cluster_set["clusters"][0]["name"] = "staging-cluster"
                         if duplicate == "equivalent-server":
                             cluster_set["clusters"][0]["server"] = "https://CLUSTER.example.:443"
-                        export_path = repository / "environments/staging/infrastructure-exports.yaml"
+                        export_path = (
+                            repository / "environments/staging/infrastructure-exports.yaml"
+                        )
                         exports = json.loads(export_path.read_text())
                         exports["exports"][0]["spec"]["resources"][0]["name"] = "staging-cluster"
                         self._sign_infrastructure_export(exports["exports"][0])
@@ -1084,7 +1246,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                             release_path = repository / "environments/staging" / filename
                             release_set = json.loads(release_path.read_text())
                             release_set["releases"][0]["cluster"] = "staging-cluster"
-                            release_path.write_text(json.dumps(release_set, separators=(",", ":")) + "\n")
+                            release_path.write_text(
+                                json.dumps(release_set, separators=(",", ":")) + "\n"
+                            )
                     cluster_path.write_text(json.dumps(cluster_set, separators=(",", ":")) + "\n")
 
                     result = self._validate(repository)
@@ -1100,15 +1264,50 @@ class SchemaCompatibilityTest(unittest.TestCase):
             self.skipTest("Go toolchain is unavailable")
 
         mutations = {
-            "cross-environment": lambda wrapper: wrapper["exports"][0]["metadata"].update(environment="staging"),
-            "secret-bearing-query": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][0].update(uri="https://cluster.example/path?token=secret"),
-            "duplicate-stack": lambda wrapper: wrapper["exports"].append({**copy.deepcopy(wrapper["exports"][0]), "metadata": {**wrapper["exports"][0]["metadata"], "planDigest": self._digest("a")}}),
-            "duplicate-resource": lambda wrapper: wrapper["exports"].append({**copy.deepcopy(wrapper["exports"][0]), "metadata": {**wrapper["exports"][0]["metadata"], "stack": "network", "root": "opentofu/live/development/network"}}),
-            "unknown-nested-field": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"]["signature"].update(token="forbidden"),
-            "missing-membership": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][0].update(name="different-cluster"),
-            "old-signature-reference": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"].update(signature={"uri": "https://evidence.example/signature", "digest": self._digest("4")}),
-            "generic-provenance": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"]["provenance"].update(uri="https://evidence.example/provenance"),
-            "wrong-gke-provider": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][1].update(uri="//gkehub.googleapis.com/projects/dev/locations/us-central1/clusters/dev-cluster"),
+            "cross-environment": lambda wrapper: wrapper["exports"][0]["metadata"].update(
+                environment="staging"
+            ),
+            "secret-bearing-query": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][
+                0
+            ].update(uri="https://cluster.example/path?token=secret"),
+            "duplicate-stack": lambda wrapper: wrapper["exports"].append(
+                {
+                    **copy.deepcopy(wrapper["exports"][0]),
+                    "metadata": {
+                        **wrapper["exports"][0]["metadata"],
+                        "planDigest": self._digest("a"),
+                    },
+                }
+            ),
+            "duplicate-resource": lambda wrapper: wrapper["exports"].append(
+                {
+                    **copy.deepcopy(wrapper["exports"][0]),
+                    "metadata": {
+                        **wrapper["exports"][0]["metadata"],
+                        "stack": "network",
+                        "root": "opentofu/live/development/network",
+                    },
+                }
+            ),
+            "unknown-nested-field": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"][
+                "signature"
+            ].update(token="forbidden"),
+            "missing-membership": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][
+                0
+            ].update(name="different-cluster"),
+            "old-signature-reference": lambda wrapper: wrapper["exports"][0]["spec"][
+                "evidence"
+            ].update(
+                signature={"uri": "https://evidence.example/signature", "digest": self._digest("4")}
+            ),
+            "generic-provenance": lambda wrapper: wrapper["exports"][0]["spec"]["evidence"][
+                "provenance"
+            ].update(uri="https://evidence.example/provenance"),
+            "wrong-gke-provider": lambda wrapper: wrapper["exports"][0]["spec"]["resources"][
+                1
+            ].update(
+                uri="//gkehub.googleapis.com/projects/dev/locations/us-central1/clusters/dev-cluster"
+            ),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
@@ -1134,11 +1333,15 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 "signature payloadDigest does not match the canonical export payload",
             ),
             "payload-digest": (
-                lambda export: export["spec"]["evidence"]["signature"].update(payloadDigest=self._digest("9")),
+                lambda export: export["spec"]["evidence"]["signature"].update(
+                    payloadDigest=self._digest("9")
+                ),
                 "signature payloadDigest does not match the canonical export payload",
             ),
             "public-key-digest": (
-                lambda export: export["spec"]["evidence"]["signature"].update(publicKeyDigest=self._digest("9")),
+                lambda export: export["spec"]["evidence"]["signature"].update(
+                    publicKeyDigest=self._digest("9")
+                ),
                 "signature publicKeyDigest does not match the embedded public key",
             ),
             "signature-value": (
@@ -1199,7 +1402,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
             trust_arguments[previous_root_index] = str(repository)
             result = subprocess.run(
                 [
-                    str(self.promotectl), "validate", "--root", str(repository),
+                    str(self.promotectl),
+                    "validate",
+                    "--root",
+                    str(repository),
                     *trust_arguments,
                 ],
                 capture_output=True,
@@ -1229,14 +1435,25 @@ class SchemaCompatibilityTest(unittest.TestCase):
                         revision_index = trust_arguments.index("--previous-repository-revision") + 1
                         trust_arguments[revision_index] = "f" * 40
                     elif case == "mutated-export":
-                        previous_export = repository.parent / "previous-gitops/environments/development/infrastructure-exports.yaml"
+                        previous_export = (
+                            repository.parent
+                            / "previous-gitops/environments/development/infrastructure-exports.yaml"
+                        )
                         previous_export.write_bytes(previous_export.read_bytes() + b" ")
                     else:
                         root_index = trust_arguments.index("--previous-repository-root") + 1
-                        trust_arguments[root_index] = str(repository.parent / "previous-gitops/environments")
+                        trust_arguments[root_index] = str(
+                            repository.parent / "previous-gitops/environments"
+                        )
 
                     result = subprocess.run(
-                        [str(self.promotectl), "validate", "--root", str(repository), *trust_arguments],
+                        [
+                            str(self.promotectl),
+                            "validate",
+                            "--root",
+                            str(repository),
+                            *trust_arguments,
+                        ],
                         capture_output=True,
                         text=True,
                     )
@@ -1255,20 +1472,26 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 directory, repository = self._repository_copy()
                 try:
                     self._active_environment(repository)
-                    export_path = repository / "environments/development/infrastructure-exports.yaml"
+                    export_path = (
+                        repository / "environments/development/infrastructure-exports.yaml"
+                    )
                     wrapper = json.loads(export_path.read_text())
                     export = wrapper["exports"][0]
                     bundle_path = repository.parent / "infrastructure-export-trust-bundle.json"
                     bundle = json.loads(bundle_path.read_text())
                     if case == "arbitrary-key":
-                        self._sign_infrastructure_export(export, key_seed=b"attacker-controlled-key")
+                        self._sign_infrastructure_export(
+                            export, key_seed=b"attacker-controlled-key"
+                        )
                         expected = "does not match keyVersion"
                     elif case == "substituted-key-version":
                         self._sign_infrastructure_export(
                             export,
                             key_version="projects/mindclade-bootstrap/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/8",
                         )
-                        expected = "is absent from the independently supplied bootstrap trust bundle"
+                        expected = (
+                            "is absent from the independently supplied bootstrap trust bundle"
+                        )
                     elif case == "revoked-key":
                         bundle["keys"][0]["revoked"] = True
                         bundle_path.write_text(json.dumps(bundle, separators=(",", ":")) + "\n")
@@ -1340,24 +1563,36 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     if case == "bootstrap-revision":
                         bundle["sourceRevision"] = "c" * 40
                     elif case == "pem-byte-digest":
-                        bundle["keys"][0]["publicKeyPEM"] = bundle["keys"][0]["publicKeyPEM"].replace(
-                            "BEGIN PUBLIC KEY", "BEGIN  PUBLIC KEY",
+                        bundle["keys"][0]["publicKeyPEM"] = bundle["keys"][0][
+                            "publicKeyPEM"
+                        ].replace(
+                            "BEGIN PUBLIC KEY",
+                            "BEGIN  PUBLIC KEY",
                         )
                     else:
-                        export_path = repository / "environments/development/infrastructure-exports.yaml"
+                        export_path = (
+                            repository / "environments/development/infrastructure-exports.yaml"
+                        )
                         wrapper = json.loads(export_path.read_text())
                         attacker_export = copy.deepcopy(wrapper["exports"][0])
-                        self._sign_infrastructure_export(attacker_export, key_seed=b"different-pem-key")
+                        self._sign_infrastructure_export(
+                            attacker_export, key_seed=b"different-pem-key"
+                        )
                         attacker_signature = attacker_export["spec"]["evidence"]["signature"]
                         attacker_der = base64.b64decode(attacker_signature["publicKey"])
                         attacker_encoded = base64.b64encode(attacker_der).decode("ascii")
                         attacker_pem = (
                             "-----BEGIN PUBLIC KEY-----\n"
-                            + "\n".join(attacker_encoded[offset:offset + 64] for offset in range(0, len(attacker_encoded), 64))
+                            + "\n".join(
+                                attacker_encoded[offset : offset + 64]
+                                for offset in range(0, len(attacker_encoded), 64)
+                            )
                             + "\n-----END PUBLIC KEY-----\n"
                         )
                         bundle["keys"][0]["publicKeyPEM"] = attacker_pem
-                        bundle["keys"][0]["publicKeyPEMSHA256"] = hashlib.sha256(attacker_pem.encode()).hexdigest()
+                        bundle["keys"][0]["publicKeyPEMSHA256"] = hashlib.sha256(
+                            attacker_pem.encode()
+                        ).hexdigest()
                     bundle_path.write_text(json.dumps(bundle, separators=(",", ":")) + "\n")
                     self._pin_infrastructure_trust_bundle(repository)
 
@@ -1430,7 +1665,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 directory, repository = self._repository_copy()
                 try:
                     self._active_environment(repository)
-                    export_path = repository / "environments/development/infrastructure-exports.yaml"
+                    export_path = (
+                        repository / "environments/development/infrastructure-exports.yaml"
+                    )
                     wrapper = json.loads(export_path.read_text())
                     export = wrapper["exports"][0]
                     original_signature = copy.deepcopy(export["spec"]["evidence"]["signature"])
@@ -1629,7 +1866,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
+            self.assertIn(
+                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                result.stderr,
+            )
             self.assertNotIn("active state", result.stderr)
         finally:
             directory.cleanup()
@@ -1657,7 +1897,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
 
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("external signature and attestation verification is pending JIT-09 ratification and qualification", result.stderr)
+            self.assertIn(
+                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                result.stderr,
+            )
             self.assertNotIn("active state", result.stderr)
         finally:
             directory.cleanup()
@@ -1690,7 +1933,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                             "gitops.mindclade.io/environment: staging",
                         )
                     elif case == "unstable-generator-name":
-                        text = text.replace("disableNameSuffixHash: true", "disableNameSuffixHash: false")
+                        text = text.replace(
+                            "disableNameSuffixHash: true", "disableNameSuffixHash: false"
+                        )
                     else:
                         text += "resources:\n  - https://attacker.example/arbitrary-cluster-state.yaml\n"
                     path.write_text(text)
@@ -1759,7 +2004,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(expected, result.stderr)
-                    self.assertNotIn("external signature and attestation verification", result.stderr)
+                    self.assertNotIn(
+                        "external signature and attestation verification", result.stderr
+                    )
                 finally:
                     directory.cleanup()
 
@@ -1784,7 +2031,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
 
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn("cluster-set.yaml and infrastructure-exports.yaml active states must match", result.stderr)
+                    self.assertIn(
+                        "cluster-set.yaml and infrastructure-exports.yaml active states must match",
+                        result.stderr,
+                    )
                 finally:
                     directory.cleanup()
 
@@ -1804,7 +2054,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 directory, repository = self._repository_copy()
                 try:
                     self._active_environment(repository)
-                    for filename, collection in (("cluster-set.yaml", "clusters"), ("infrastructure-exports.yaml", "exports")):
+                    for filename, collection in (
+                        ("cluster-set.yaml", "clusters"),
+                        ("infrastructure-exports.yaml", "exports"),
+                    ):
                         path = repository / "environments/development" / filename
                         document = json.loads(path.read_text())
                         document["active"] = False
@@ -1822,7 +2075,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
 
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertIn(f"{selected} cannot be active before the development environment root", result.stderr)
+                    self.assertIn(
+                        f"{selected} cannot be active before the development environment root",
+                        result.stderr,
+                    )
                 finally:
                     directory.cleanup()
 
@@ -1865,15 +2121,23 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 [
                     str(self.promotectl),
                     "verify-transition",
-                    "--root", str(repository),
+                    "--root",
+                    str(repository),
                     *self._trust_arguments(repository),
-                    "--action", "promote",
-                    "--environment", "development",
-                    "--release-class", "service",
-                    "--component", "api-service",
-                    "--cluster", "dev-cluster",
-                    "--artifact-digest", self._digest("f"),
-                    "--prior-digest", self._digest("a"),
+                    "--action",
+                    "promote",
+                    "--environment",
+                    "development",
+                    "--release-class",
+                    "service",
+                    "--component",
+                    "api-service",
+                    "--cluster",
+                    "dev-cluster",
+                    "--artifact-digest",
+                    self._digest("f"),
+                    "--prior-digest",
+                    self._digest("a"),
                 ],
                 capture_output=True,
                 text=True,
@@ -1910,21 +2174,31 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     service_path = repository / "environments/development/service-releases.yaml"
                     service_set = json.loads(service_path.read_text())
                     if case == "inactive-root":
-                        self._set_inactive(repository, "development", "cluster-set.yaml", "clusters")
-                        self._set_inactive(repository, "development", "infrastructure-exports.yaml", "exports")
+                        self._set_inactive(
+                            repository, "development", "cluster-set.yaml", "clusters"
+                        )
+                        self._set_inactive(
+                            repository, "development", "infrastructure-exports.yaml", "exports"
+                        )
                         self._set_kustomization_activation(repository, "development", "inactive")
                     elif case == "wrong-wrapper-environment":
                         service_set["environment"] = "staging"
-                        service_path.write_text(json.dumps(service_set, separators=(",", ":")) + "\n")
+                        service_path.write_text(
+                            json.dumps(service_set, separators=(",", ":")) + "\n"
+                        )
                     elif case == "missing-cluster":
                         service_set["releases"][0]["cluster"] = "ghost-cluster"
-                        service_path.write_text(json.dumps(service_set, separators=(",", ":")) + "\n")
+                        service_path.write_text(
+                            json.dumps(service_set, separators=(",", ":")) + "\n"
+                        )
                         transition_overrides["cluster"] = "ghost-cluster"
                     else:
                         service_set["releases"][0]["artifact"] = (
                             "registry.example/api@" + self._digest("e")
                         )
-                        service_path.write_text(json.dumps(service_set, separators=(",", ":")) + "\n")
+                        service_path.write_text(
+                            json.dumps(service_set, separators=(",", ":")) + "\n"
+                        )
 
                     result = self._transition(repository, **transition_overrides)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -1964,7 +2238,9 @@ class SchemaCompatibilityTest(unittest.TestCase):
             self._active_environment(repository)
             path = repository / "environments/development/service-releases.yaml"
             document = json.loads(path.read_text())
-            document["releases"][0]["desiredStatePath"] = "environments/development/services/another-service"
+            document["releases"][0]["desiredStatePath"] = (
+                "environments/development/services/another-service"
+            )
             path.write_text(json.dumps(document, separators=(",", ":")) + "\n")
 
             result = self._validate(repository)
@@ -2085,7 +2361,10 @@ class SchemaCompatibilityTest(unittest.TestCase):
             path.write_text(json.dumps(document, separators=(",", ":")) + "\n")
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn("secret reference materialization boundary is pending JIT-05 ratification and qualification", result.stderr)
+            self.assertIn(
+                "secret reference materialization boundary is pending JIT-05 ratification and qualification",
+                result.stderr,
+            )
             self.assertNotIn("duplicate", result.stderr)
         finally:
             directory.cleanup()

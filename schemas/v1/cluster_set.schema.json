@@ -6,9 +6,9 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "environment", "active", "clusters"],
   "properties": {
-    "schemaVersion": {"const": "v1"},
-    "environment": {"enum": ["development", "staging", "production", "restricted"]},
-    "active": {"type": "boolean"},
+    "schemaVersion": { "const": "v1" },
+    "environment": { "enum": ["development", "staging", "production", "restricted"] },
+    "active": { "type": "boolean" },
     "clusters": {
       "type": "array",
       "items": {
@@ -16,13 +16,13 @@
         "additionalProperties": false,
         "required": ["name", "server", "desiredStateRevision", "activationRecordDigest", "labels"],
         "properties": {
-          "name": {"type": "string", "pattern": "^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$"},
-          "server": {"type": "string", "maxLength": 2048, "pattern": "^https://[^/?#@\\s]+/?$"},
-          "desiredStateRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-          "activationRecordDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "name": { "type": "string", "pattern": "^[a-z](?:[a-z0-9-]{1,61}[a-z0-9])$" },
+          "server": { "type": "string", "maxLength": 2048, "pattern": "^https://[^/?#@\\s]+/?$" },
+          "desiredStateRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "activationRecordDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
           "labels": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": { "type": "string" },
             "required": ["gitops.mindclade.io/active", "gitops.mindclade.io/environment"]
           }
         }
@@ -30,7 +30,13 @@
     }
   },
   "allOf": [
-    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"clusters": {"minItems": 1}}}},
-    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"clusters": {"maxItems": 0}}}}
+    {
+      "if": { "properties": { "active": { "const": true } } },
+      "then": { "properties": { "clusters": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "active": { "const": false } } },
+      "then": { "properties": { "clusters": { "maxItems": 0 } } }
+    }
   ]
 }

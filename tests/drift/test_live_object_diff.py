@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import os
 import re
 import tempfile
@@ -47,9 +48,7 @@ class LiveObjectDiffTest(unittest.TestCase):
     def assert_dormant_argo_sso_contract(self, core_config, credential_contract):
         core_data = re.search(r"(?ms)^data:\n(?P<body>.*)\Z", core_config)
         self.assertIsNotNone(core_data, "argocd-cm lacks data")
-        effective_keys = set(
-            re.findall(r"(?m)^  ([A-Za-z0-9_.-]+):", core_data["body"])
-        )
+        effective_keys = set(re.findall(r"(?m)^  ([A-Za-z0-9_.-]+):", core_data["body"]))
         self.assertNotIn("url", effective_keys)
         self.assertNotIn("dex.config", effective_keys)
 
@@ -89,8 +88,12 @@ class LiveObjectDiffTest(unittest.TestCase):
         )
 
     def test_exact_blueprint_file_count(self):
-        files = [path for path in ROOT.rglob("*") if path.is_file() and ".git" not in path.parts]
-        self.assertEqual(len(files), 129)
+        files = [
+            path
+            for path in ROOT.rglob("*")
+            if path.is_file() and ".git" not in path.parts and ".ruff_cache" not in path.parts
+        ]
+        self.assertEqual(len(files), 138)
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):
@@ -223,12 +226,11 @@ class LiveObjectDiffTest(unittest.TestCase):
             ),
         }
         for mutation, (mutated_core, mutated_contract) in cases.items():
-            with self.subTest(mutation=mutation):
-                with self.assertRaises(AssertionError):
-                    self.assert_dormant_argo_sso_contract(
-                        mutated_core,
-                        mutated_contract,
-                    )
+            with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
+                self.assert_dormant_argo_sso_contract(
+                    mutated_core,
+                    mutated_contract,
+                )
 
     def test_namespace_pss_version_matches_validated_kubernetes_minor(self):
         namespace = (ROOT / "controllers/argocd/namespace.yaml").read_text()
@@ -248,10 +250,7 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIn("kustomize build", justfile)
 
     def test_all_workflows_use_the_organization_approved_checkout_pin(self):
-        expected = (
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 "
-            "# v7.0.1"
-        )
+        expected = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
         stale = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
         workflow_directory = ROOT / ".github" / "workflows"
         workflows = sorted(workflow_directory.glob("*.yml"))
@@ -264,8 +263,7 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_all_workflows_use_the_locked_nix_toolchain(self):
         installer = (
-            "DeterminateSystems/nix-installer-action@"
-            "ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22"
+            "DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22"
         )
         workflow_directory = ROOT / ".github" / "workflows"
         for path in sorted(workflow_directory.glob("*.yml")):
@@ -327,16 +325,11 @@ class LiveObjectDiffTest(unittest.TestCase):
             readme,
         )
         self.assertIsNotNone(section, "README lacks the operational runbook index")
-        indexed = dict(
-            re.findall(r"(?m)^- \[([^]]+)\]\((runbooks/[^)]+\.md)\)$", section["body"])
-        )
+        indexed = dict(re.findall(r"(?m)^- \[([^]]+)\]\((runbooks/[^)]+\.md)\)$", section["body"]))
         self.assertEqual(indexed, RUNBOOKS)
 
         runbook_root = (ROOT / "runbooks").resolve()
-        actual = {
-            path.relative_to(ROOT).as_posix()
-            for path in (ROOT / "runbooks").glob("*.md")
-        }
+        actual = {path.relative_to(ROOT).as_posix() for path in (ROOT / "runbooks").glob("*.md")}
         self.assertEqual(actual, set(RUNBOOKS.values()))
 
         codeowners = {}
@@ -441,22 +434,18 @@ class LiveObjectDiffTest(unittest.TestCase):
     def test_dependabot_covers_declared_dependency_ecosystems(self):
         text = (ROOT / ".github/dependabot.yml").read_text()
         self.assertRegex(text, r"(?m)^version: 2$")
-        matches = list(
-            re.finditer(r"(?m)^  - package-ecosystem: ([a-z-]+)$", text)
-        )
+        matches = list(re.finditer(r"(?m)^  - package-ecosystem: ([a-z-]+)$", text))
         configured = {}
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            block = text[match.end():end]
+            block = text[match.end() : end]
             directory = re.search(r"(?m)^    directory: (\S+)$", block)
             interval = re.search(r"(?m)^      interval: (\S+)$", block)
             limit = re.search(
                 r"(?m)^    open-pull-requests-limit: ([1-9][0-9]*)$",
                 block,
             )
-            reviewers = set(
-                re.findall(r"(?m)^      - (mindclade/[a-z-]+)$", block)
-            )
+            reviewers = set(re.findall(r"(?m)^      - (mindclade/[a-z-]+)$", block))
             self.assertIsNotNone(directory, match.group(1))
             self.assertIsNotNone(interval, match.group(1))
             self.assertIsNotNone(limit, match.group(1))

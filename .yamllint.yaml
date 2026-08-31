@@ -1,0 +1,23 @@
+extends: default
+
+ignore: |
+  bazel-*/
+  build/
+  rendered/
+  dist/
+
+rules:
+  document-start: disable
+  line-length: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+  # Environment contracts are canonical compact JSON, which is also valid YAML.
+  commas:
+    min-spaces-after: 0
+    max-spaces-after: 1

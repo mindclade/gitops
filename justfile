@@ -1,20 +1,44 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-default: nix-validate
+default:
+    @just --list
 
 toolchain:
     nix build --no-link --no-update-lock-file .#toolchain
 
-flake-check:
-    nix flake check --no-update-lock-file
-
 nix-validate:
     nix flake check --no-update-lock-file
-    nix develop --no-update-lock-file .#ci --command just validate
+    nix develop --no-update-lock-file .#ci --command just check
     nix develop --no-update-lock-file .#ci --command just bazel-test
 
-fmt-check:
-    test -z "$(gofmt -l tooling)"
+format:
+    biome check --write .
+    ruff format .
+    cd tooling && golangci-lint fmt --config ../.golangci.yml
+    opa fmt -w policy
+    git ls-files 'BUILD.bazel' 'MODULE.bazel' '*.bzl' | xargs buildifier -mode=fix
+    nixfmt flake.nix
+    just --fmt
+
+format-check:
+    biome check .
+    ruff format --check .
+    cd tooling && golangci-lint fmt --config ../.golangci.yml --diff
+    opa fmt --fail policy >/dev/null
+    git ls-files 'BUILD.bazel' 'MODULE.bazel' '*.bzl' | xargs buildifier -mode=check -lint=warn
+    nixfmt --check flake.nix
+    just --fmt --check
+
+fmt-check: format-check
+
+lint:
+    biome lint .
+    ruff check .
+    pyright
+    cd tooling && golangci-lint run --config ../.golangci.yml ./...
+    actionlint .github/workflows/*.yml
+    yamllint --config-file .yamllint.yaml .
+    markdownlint-cli2
 
 go-test:
     cd tooling && go test ./...
@@ -57,23 +81,25 @@ bootstrap-check:
 lint-ci:
     actionlint .github/workflows/*.yml
 
-validate: fmt-check go-test python-test policy-test bootstrap-check lint-ci
+validate-source:
     cd tooling && go run ./cmd/promotectl validate --root ..
 
+flake-check:
+    nix flake check --no-build --no-update-lock-file
+
+test: go-test python-test policy-test bootstrap-check bazel-test
+
+check: format-check lint validate-source test flake-check
+
+validate: check
+
+ci: check
+
 render environment:
-    cd tooling && go run ./cmd/promotectl render --root .. --environment {{environment}}
+    cd tooling && go run ./cmd/promotectl render --root .. --environment {{ environment }}
 
 verify-bootstrap:
     cd tooling && go run ./cmd/promotectl verify-bootstrap --root .. --fetch
 
 bazel-test:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [[ "$(uname -s)" == Darwin ]]; then
-      # Bazel owns its compiler/action environment. Do not leak Nix's Darwin
-      # linker flags into rules_go's separately declared C toolchain.
-      unset NIX_BINTOOLS NIX_CC NIX_CFLAGS_COMPILE NIX_CFLAGS_LINK NIX_LDFLAGS
-      export CC=/usr/bin/clang
-      export CXX=/usr/bin/clang++
-    fi
-    USE_BAZEL_VERSION=9.2.0 bazelisk --output_base=/tmp/mindclade-gitops-bazel-output test --lockfile_mode=off --symlink_prefix=/tmp/mindclade-gitops-bazel- //...
+    bazel test --config=ci //...

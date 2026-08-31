@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import re
@@ -5,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -40,7 +41,9 @@ class EvidenceChainTest(unittest.TestCase):
         if runfile:
             candidate = Path(runfile)
             if not candidate.is_absolute():
-                candidate = Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] / candidate
+                candidate = (
+                    Path(os.environ["TEST_SRCDIR"]) / os.environ["TEST_WORKSPACE"] / candidate
+                )
             if candidate.is_file():
                 cls.promotectl = candidate
                 return
@@ -62,12 +65,37 @@ class EvidenceChainTest(unittest.TestCase):
     def test_receipt_schema_requires_complete_immutable_chain(self):
         schema = json.loads((ROOT / "schemas/v1/promotion_receipt.schema.json").read_text())
         required = set(schema["required"])
-        self.assertTrue({"releaseClass", "component", "cluster", "sourceRevision", "artifactReference", "artifactDigest", "priorDigest", "attestationDigest", "signer", "issuer", "issuedAt", "approvals", "repository", "workflowRunID", "workflowRunAttempt", "checkedOutRevision", "requester"} <= required)
+        self.assertTrue(
+            {
+                "releaseClass",
+                "component",
+                "cluster",
+                "sourceRevision",
+                "artifactReference",
+                "artifactDigest",
+                "priorDigest",
+                "attestationDigest",
+                "signer",
+                "issuer",
+                "issuedAt",
+                "approvals",
+                "repository",
+                "workflowRunID",
+                "workflowRunAttempt",
+                "checkedOutRevision",
+                "requester",
+            }
+            <= required
+        )
         self.assertEqual(schema["properties"]["approvals"]["minItems"], 2)
         self.assertTrue(DIGEST_PATTERN.fullmatch("sha256:" + "a" * 64))
         self.assertFalse(DIGEST_PATTERN.fullmatch("latest"))
-        artifact_reference_pattern = re.compile(schema["properties"]["artifactReference"]["pattern"])
-        self.assertTrue(artifact_reference_pattern.fullmatch("registry.example/api@sha256:" + "a" * 64))
+        artifact_reference_pattern = re.compile(
+            schema["properties"]["artifactReference"]["pattern"]
+        )
+        self.assertTrue(
+            artifact_reference_pattern.fullmatch("registry.example/api@sha256:" + "a" * 64)
+        )
         self.assertFalse(artifact_reference_pattern.fullmatch("@sha256:" + "a" * 64))
         approvals = schema["properties"]["approvals"]
         self.assertEqual(
@@ -77,8 +105,9 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertEqual(approvals["minContains"], 1)
         self.assertEqual(approvals["maxContains"], 1)
         contexts = {
-            condition["if"]["properties"]["environment"]["const"]:
-            condition["then"]["properties"]["approvals"]["contains"]["const"]
+            condition["if"]["properties"]["environment"]["const"]: condition["then"]["properties"][
+                "approvals"
+            ]["contains"]["const"]
             for condition in schema["allOf"]
             if "environment" in condition["if"].get("properties", {})
         }
@@ -109,7 +138,7 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$ARTIFACT_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
         self.assertIn("EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09", workflow)
-        self.assertIn('!= qualified-v1', workflow)
+        self.assertIn("!= qualified-v1", workflow)
         self.assertIn('[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]', workflow)
         self.assertIn('[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
         self.assertNotIn("upload-artifact@", workflow)
@@ -117,7 +146,7 @@ class EvidenceChainTest(unittest.TestCase):
         self.assertNotIn("promotion-receipt.json", workflow)
 
     def _receipt(self, **overrides):
-        issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        issued_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         values = {
             "environment": "development",
             "release-class": "service",
@@ -171,10 +200,12 @@ class EvidenceChainTest(unittest.TestCase):
         )
         for release_class, artifact_reference in cases:
             with self.subTest(release_class=release_class):
-                result = self._receipt(**{
-                    "release-class": release_class,
-                    "artifact-reference": artifact_reference,
-                })
+                result = self._receipt(
+                    **{
+                        "release-class": release_class,
+                        "artifact-reference": artifact_reference,
+                    }
+                )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_receipt_rejects_missing_malformed_or_mismatched_governance_in_every_environment(self):
@@ -227,18 +258,30 @@ class EvidenceChainTest(unittest.TestCase):
                 result = self._receipt(**{"artifact-reference": artifact_reference})
                 self.assertNotEqual(result.returncode, 0, result.stdout)
 
-        platform_without_oci = self._receipt(**{
-            "release-class": "platform",
-            "artifact-reference": "registry.example/platform/kueue@" + digest,
-        })
+        platform_without_oci = self._receipt(
+            **{
+                "release-class": "platform",
+                "artifact-reference": "registry.example/platform/kueue@" + digest,
+            }
+        )
         self.assertNotEqual(platform_without_oci.returncode, 0, platform_without_oci.stdout)
 
     def test_receipt_rejects_unsafe_identity_stale_time_and_invalid_metadata(self):
         if self.promotectl is None:
             self.skipTest("Go toolchain is unavailable")
 
-        future = (datetime.now(timezone.utc) + timedelta(minutes=6)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        expired = (datetime.now(timezone.utc) - timedelta(hours=25)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        future = (
+            (datetime.now(UTC) + timedelta(minutes=6))
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        expired = (
+            (datetime.now(UTC) - timedelta(hours=25))
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         invalid = (
             {"signer": "https://user@issuer.example/workload"},
             {"signer": "https://issuer.example/workload?token=secret"},
@@ -251,7 +294,7 @@ class EvidenceChainTest(unittest.TestCase):
             {"cluster": "invalid-cluster-"},
             {"issued-at": future},
             {"issued-at": expired},
-            {"issued-at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()},
+            {"issued-at": datetime.now(UTC).replace(microsecond=0).isoformat()},
             {"repository": "fork/gitops"},
             {"workflow-run-id": "0"},
             {"checked-out-revision": "mutable"},

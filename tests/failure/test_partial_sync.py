@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import re
@@ -38,7 +39,9 @@ class PartialSyncTest(unittest.TestCase):
                 active_release_sets += len(release_set["releases"]) if release_set["active"] else 0
         concrete_applications = 0
         for path in ROOT.rglob("*.yaml"):
-            concrete_applications += len(re.findall(r"(?m)^kind:\s+Application\s*$", path.read_text()))
+            concrete_applications += len(
+                re.findall(r"(?m)^kind:\s+Application\s*$", path.read_text())
+            )
         self.assertEqual(active_clusters, 0)
         self.assertEqual(active_release_sets, 0)
         self.assertEqual(concrete_applications, 0)
@@ -74,12 +77,10 @@ class PartialSyncTest(unittest.TestCase):
     def test_restricted_workloads_use_the_restricted_project(self):
         expected_projects = {
             "control-plane-services.yaml": (
-                '{{ if eq .environment "restricted" }}restricted'
-                "{{ else }}services{{ end }}"
+                '{{ if eq .environment "restricted" }}restricted{{ else }}services{{ end }}'
             ),
             "execution-workers.yaml": (
-                '{{ if eq .environment "restricted" }}restricted'
-                "{{ else }}workers{{ end }}"
+                '{{ if eq .environment "restricted" }}restricted{{ else }}workers{{ end }}'
             ),
         }
         for filename, project in expected_projects.items():
@@ -113,8 +114,7 @@ class PartialSyncTest(unittest.TestCase):
             for release_class in ("platform", "service", "worker")
         }
         applications.update(
-            f"{environment}.root.shared-cluster"
-            for environment in ("development", "staging")
+            f"{environment}.root.shared-cluster" for environment in ("development", "staging")
         )
         self.assertEqual(len(applications), 8)
 
@@ -136,26 +136,18 @@ class PartialSyncTest(unittest.TestCase):
             )
 
     def test_workload_applications_select_one_component_and_artifact(self):
-        schema = json.loads(
-            (ROOT / "schemas/v1/workload_releases.schema.json").read_text()
-        )
+        schema = json.loads((ROOT / "schemas/v1/workload_releases.schema.json").read_text())
         release = schema["properties"]["releases"]["items"]
         self.assertIn("desiredStatePath", release["required"])
         path_pattern = re.compile(release["properties"]["desiredStatePath"]["pattern"])
         self.assertIsNotNone(
-            path_pattern.fullmatch(
-                "environments/development/services/control-plane"
-            )
+            path_pattern.fullmatch("environments/development/services/control-plane")
         )
         self.assertIsNotNone(
-            path_pattern.fullmatch(
-                "environments/restricted/workers/training-worker"
-            )
+            path_pattern.fullmatch("environments/restricted/workers/training-worker")
         )
         self.assertIsNone(path_pattern.fullmatch("environments/development"))
-        self.assertIsNone(
-            path_pattern.fullmatch("environments/development/services/component-")
-        )
+        self.assertIsNone(path_pattern.fullmatch("environments/development/services/component-"))
 
         for filename in ("control-plane-services.yaml", "execution-workers.yaml"):
             text = (ROOT / "controllers/applicationsets" / filename).read_text()

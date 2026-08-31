@@ -26,9 +26,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mindclade/gitops/tooling/internal/release"
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"gopkg.in/yaml.v3"
+
+	"github.com/mindclade/gitops/tooling/internal/release"
 )
 
 var environmentDocuments = []string{
@@ -167,7 +168,8 @@ func addPaths(target map[string]bool, prefix string, names ...string) {
 
 func ExpectedSourceFiles() map[string]bool {
 	expected := map[string]bool{}
-	addPaths(expected, "", ".editorconfig", ".gitignore", "BUILD.bazel", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "component.yaml", "flake.lock", "flake.nix", "justfile")
+	addPaths(expected, "", ".editorconfig", ".gitignore", ".golangci.yml", ".markdownlint-cli2.yaml", ".pre-commit-config.yaml", ".yamllint.yaml", "BUILD.bazel", "CONTRIBUTING.md", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "biome.json", "component.yaml", "flake.lock", "flake.nix", "justfile", "pyproject.toml")
+	addPaths(expected, ".vscode", "extensions.json", "settings.json")
 	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "dependabot.yml", "pull_request_template.md")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
 	addPaths(expected, "controllers/argocd", "namespace.yaml", "repository-credentials-reference.yaml", "notifications.yaml", "resource-customizations.yaml", "kustomization.yaml")
@@ -209,7 +211,7 @@ func actualSourceFiles(root string) (map[string]bool, error) {
 			return err
 		}
 		name := entry.Name()
-		if entry.IsDir() && (name == ".git" || name == ".cache" || name == ".pytest_cache" || name == "__pycache__") {
+		if entry.IsDir() && (name == ".git" || name == ".cache" || name == ".pytest_cache" || name == ".ruff_cache" || name == "__pycache__") {
 			return filepath.SkipDir
 		}
 		if entry.IsDir() {
@@ -337,11 +339,11 @@ func validateComponent(root string) error {
 		return fmt.Errorf("validate component.yaml: %w", err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("validate component.yaml: multiple YAML documents are not allowed")
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("validate component.yaml: multiple YAML documents are not allowed")
 	}
 	if component.APIVersion != "mindclade.io/v1alpha1" || component.Kind != "Component" || component.Metadata.Name != "gitops" {
-		return fmt.Errorf("validate component.yaml: invalid component identity")
+		return errors.New("validate component.yaml: invalid component identity")
 	}
 	if strings.TrimSpace(component.Metadata.Description) == "" || component.Metadata.Description != strings.TrimSpace(component.Metadata.Description) ||
 		component.Metadata.Annotations["github.com/project-slug"] != "mindclade/gitops" ||
@@ -349,18 +351,18 @@ func validateComponent(root string) error {
 		component.Metadata.Annotations["mindclade.dev/trust-tier"] != "deployment-control" ||
 		component.Metadata.Annotations["mindclade.dev/recovery-tier"] != "isolated-git" ||
 		component.Metadata.Annotations["mindclade.io/qualification-status"] != "FAIL" {
-		return fmt.Errorf("validate component.yaml: metadata contract is incomplete")
+		return errors.New("validate component.yaml: metadata contract is incomplete")
 	}
 	if component.Spec.Type != "deployment-control-plane" || component.Spec.Lifecycle != "pre-production" || component.Spec.Maturity != "pre-production" ||
 		component.Spec.Owner != "platform-operations" || component.Spec.RepositoryClass != "deployment-source" || component.Spec.DataClassification != "public" ||
 		component.Spec.ProductionAuthority {
-		return fmt.Errorf("validate component.yaml: owner/qualification/authority contract is invalid")
+		return errors.New("validate component.yaml: owner/qualification/authority contract is invalid")
 	}
 	if len(component.Spec.SecurityReviewers) != 1 || component.Spec.SecurityReviewers[0] != "security" {
-		return fmt.Errorf("validate component.yaml: security co-ownership contract is invalid")
+		return errors.New("validate component.yaml: security co-ownership contract is invalid")
 	}
 	if strings.TrimSpace(component.Spec.Activation.SourceReady.Description) == "" || strings.TrimSpace(component.Spec.Activation.Connected.Description) == "" {
-		return fmt.Errorf("validate component.yaml: activation boundary is incomplete")
+		return errors.New("validate component.yaml: activation boundary is incomplete")
 	}
 	if err := validateComponentReferences("dependency", component.Spec.Dependencies, true); err != nil {
 		return err
@@ -381,7 +383,7 @@ func validateComponent(root string) error {
 		return err
 	}
 	if component.Spec.Release.Strategy != "protected-digest-promotion" || component.Spec.Release.Artifact != "source-commit" || !component.Spec.Release.Immutable {
-		return fmt.Errorf("validate component.yaml: release metadata is invalid")
+		return errors.New("validate component.yaml: release metadata is invalid")
 	}
 	requiredEvidence := map[string]bool{
 		"signed-release":                 true,
@@ -390,7 +392,7 @@ func validateComponent(root string) error {
 		"protected-environment-approval": true,
 	}
 	if len(component.Spec.Release.Evidence) != len(requiredEvidence) {
-		return fmt.Errorf("validate component.yaml: release evidence contract is incomplete")
+		return errors.New("validate component.yaml: release evidence contract is incomplete")
 	}
 	seen := map[string]bool{}
 	for _, evidence := range component.Spec.Release.Evidence {
@@ -473,8 +475,8 @@ func ValidateRepositoryWithOptions(root string, options ValidationOptions) error
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
 	}
-	if len(expected) != 129 {
-		return fmt.Errorf("internal source manifest has %d files, expected 129", len(expected))
+	if len(expected) != 138 {
+		return fmt.Errorf("internal source manifest has %d files, expected 138", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
@@ -648,7 +650,7 @@ func validateEnvironmentKustomization(root, environment string, rootActive bool)
 		return fmt.Errorf("validate %s: %w", relative, err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("validate %s: multiple YAML documents are not allowed", relative)
 	}
 	if document["apiVersion"] != "kustomize.config.k8s.io/v1beta1" || document["kind"] != "Kustomization" {
@@ -664,7 +666,7 @@ func validateEnvironmentKustomization(root, environment string, rootActive bool)
 	if err := requireExactObjectKeys(generatorOptions, relative+".generatorOptions", "disableNameSuffixHash", "labels"); err != nil {
 		return err
 	}
-	if disabled, ok := generatorOptions["disableNameSuffixHash"].(bool); !ok || !disabled {
+	if disabled, disabledOK := generatorOptions["disableNameSuffixHash"].(bool); !disabledOK || !disabled {
 		return fmt.Errorf("validate %s: generatorOptions.disableNameSuffixHash must be true", relative)
 	}
 	expectedActivation := "inactive"
@@ -722,7 +724,7 @@ func validatePlatformKustomizations(root string) error {
 			return fmt.Errorf("validate %s: %w", relative, err)
 		}
 		var trailing any
-		if err := decoder.Decode(&trailing); err != io.EOF {
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 			return fmt.Errorf("validate %s: multiple YAML documents are not allowed", relative)
 		}
 		if err := requireExactObjectKeys(document, relative, "apiVersion", "kind", "namespace", "generatorOptions", "configMapGenerator"); err != nil {
@@ -879,11 +881,11 @@ func validateSchemaDocumentContent(content []byte, schemaRoot, documentPath, sch
 func exactUnsignedJSONInteger(value any) (uint64, error) {
 	number, ok := value.(json.Number)
 	if !ok {
-		return 0, fmt.Errorf("must be a JSON integer")
+		return 0, errors.New("must be a JSON integer")
 	}
 	parsed, err := strconv.ParseUint(number.String(), 10, 64)
 	if err != nil || strconv.FormatUint(parsed, 10) != number.String() {
-		return 0, fmt.Errorf("must be a canonical unsigned JSON integer")
+		return 0, errors.New("must be a canonical unsigned JSON integer")
 	}
 	return parsed, nil
 }
@@ -969,7 +971,7 @@ func validateClusters(document map[string]any, environment string) (map[string]b
 			return nil, fmt.Errorf("cluster %s has an unsafe API server URI", name)
 		}
 		if clusters[name] || servers[canonicalServer] {
-			return nil, fmt.Errorf("cluster-set.yaml contains a duplicate cluster name or server")
+			return nil, errors.New("cluster-set.yaml contains a duplicate cluster name or server")
 		}
 		clusters[name] = true
 		servers[canonicalServer] = true
@@ -1212,8 +1214,8 @@ func VerifyTransitionWithOptions(root, action, environment, releaseClass, compon
 	if err != nil {
 		return err
 	}
-	if err := validateWorkloadReleaseMetadata(document, environment, filename); err != nil {
-		return err
+	if validationErr := validateWorkloadReleaseMetadata(document, environment, filename); validationErr != nil {
+		return validationErr
 	}
 	if active, _ := document["active"].(bool); !active {
 		return fmt.Errorf("%s %s release set is inactive", environment, releaseClass)
@@ -1229,19 +1231,19 @@ func VerifyTransitionWithOptions(root, action, environment, releaseClass, compon
 		current := fmt.Sprint(record["digest"])
 		previous := fmt.Sprint(record["priorDigest"])
 		if priorDigest != current {
-			return fmt.Errorf("requested prior digest does not equal the checked-out admitted digest")
+			return errors.New("requested prior digest does not equal the checked-out admitted digest")
 		}
 		if action == "promote" {
 			if artifactDigest == current {
-				return fmt.Errorf("promotion artifact already equals the admitted digest")
+				return errors.New("promotion artifact already equals the admitted digest")
 			}
 			if artifactDigest == previous {
-				return fmt.Errorf("promotion artifact equals the checked-out rollback digest; use the rollback transition")
+				return errors.New("promotion artifact equals the checked-out rollback digest; use the rollback transition")
 			}
 			return nil
 		}
 		if artifactDigest != previous {
-			return fmt.Errorf("rollback artifact does not equal the checked-out previous digest")
+			return errors.New("rollback artifact does not equal the checked-out previous digest")
 		}
 		return nil
 	}
@@ -1338,7 +1340,7 @@ func newInfrastructureExportValidationContext(root string, options ValidationOpt
 	provided := 0
 	for _, input := range inputs {
 		if input != strings.TrimSpace(input) {
-			return nil, fmt.Errorf("infrastructure trust inputs must not contain surrounding whitespace")
+			return nil, errors.New("infrastructure trust inputs must not contain surrounding whitespace")
 		}
 		if input != "" {
 			provided++
@@ -1372,7 +1374,7 @@ func newInfrastructureExportValidationContext(root string, options ValidationOpt
 		return nil, err
 	}
 	if currentResolved == previousResolved {
-		return nil, fmt.Errorf("previous repository root must be an independently supplied snapshot, not the current repository root")
+		return nil, errors.New("previous repository root must be an independently supplied snapshot, not the current repository root")
 	}
 	context.trustAnchors, err = loadInfrastructureExportTrustBundle(trustPath, trustDigest, bootstrapRevision)
 	if err != nil {
@@ -1386,7 +1388,7 @@ func newInfrastructureExportValidationContext(root string, options ValidationOpt
 }
 
 func infrastructureExportTrustInputsError() error {
-	return fmt.Errorf("active infrastructure exports require independently protected --infrastructure-export-trust-bundle, --infrastructure-export-trust-bundle-digest, --bootstrap-source-revision, --previous-repository-root, --previous-repository-revision, and --previous-infrastructure-state-digest inputs")
+	return errors.New("active infrastructure exports require independently protected --infrastructure-export-trust-bundle, --infrastructure-export-trust-bundle-digest, --bootstrap-source-revision, --previous-repository-root, --previous-repository-revision, and --previous-infrastructure-state-digest inputs")
 }
 
 func resolvedDirectory(path, label string) (string, error) {
@@ -1420,7 +1422,7 @@ func readBoundedRegularFile(path, label string, maximum int64) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", label, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	openedInfo, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat opened %s: %w", label, err)
@@ -1466,18 +1468,18 @@ func loadInfrastructureExportTrustBundle(path, expectedDigest, expectedBootstrap
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
-			return nil, fmt.Errorf("infrastructure export trust bundle must contain exactly one JSON document")
+			return nil, errors.New("infrastructure export trust bundle must contain exactly one JSON document")
 		}
 		return nil, fmt.Errorf("infrastructure export trust bundle has invalid trailing JSON: %w", err)
 	}
 	if document.SchemaVersion != "v1" || document.SourceRepository != "mindclade/bootstrap" || document.Purpose != "infrastructure-export-signing" {
-		return nil, fmt.Errorf("infrastructure export trust bundle identity is not the reviewed bootstrap v1 contract")
+		return nil, errors.New("infrastructure export trust bundle identity is not the reviewed bootstrap v1 contract")
 	}
 	if document.SourceRevision != expectedBootstrapRevision {
 		return nil, fmt.Errorf("infrastructure export trust bundle sourceRevision %s does not equal protected bootstrap revision %s", document.SourceRevision, expectedBootstrapRevision)
 	}
 	if len(document.Keys) == 0 || len(document.Keys) > 16 {
-		return nil, fmt.Errorf("infrastructure export trust bundle must contain 1 to 16 rotation keys")
+		return nil, errors.New("infrastructure export trust bundle must contain 1 to 16 rotation keys")
 	}
 	anchors := make(map[string]infrastructureExportTrustAnchor, len(document.Keys))
 	digests := make(map[string]bool, len(document.Keys))
@@ -1507,8 +1509,8 @@ func loadInfrastructureExportTrustBundle(path, expectedDigest, expectedBootstrap
 		if subtle.ConstantTimeCompare([]byte(key.PublicKeyDigest), []byte(publicKeyDigest)) != 1 {
 			return nil, fmt.Errorf("%s publicKeyDigest does not match its canonical SPKI DER public key", label)
 		}
-		if err := validateInfrastructureExportPublicKeyPEM(key, publicKeyDER, label); err != nil {
-			return nil, err
+		if validationErr := validateInfrastructureExportPublicKeyPEM(key, publicKeyDER, label); validationErr != nil {
+			return nil, validationErr
 		}
 		if digests[publicKeyDigest] {
 			return nil, fmt.Errorf("%s duplicates publicKeyDigest %s", label, publicKeyDigest)
@@ -1587,11 +1589,11 @@ func validateInfrastructureExportPublicKeyPEM(key infrastructureExportTrustKeyDo
 func splitInfrastructureExportKeyVersion(keyVersion string) (string, uint64, error) {
 	separator := strings.LastIndexByte(keyVersion, '/')
 	if separator < 1 || separator == len(keyVersion)-1 {
-		return "", 0, fmt.Errorf("keyVersion lacks a numeric version suffix")
+		return "", 0, errors.New("keyVersion lacks a numeric version suffix")
 	}
 	version, err := strconv.ParseUint(keyVersion[separator+1:], 10, 64)
 	if err != nil || version == 0 {
-		return "", 0, fmt.Errorf("keyVersion has an invalid numeric version suffix")
+		return "", 0, errors.New("keyVersion has an invalid numeric version suffix")
 	}
 	return keyVersion[:separator], version, nil
 }
@@ -1628,15 +1630,15 @@ func parseCanonicalInfrastructureExportTime(value, label string) (time.Time, err
 func canonicalInfrastructureExportPayloadDigest(export map[string]any, environment string) (string, error) {
 	metadata, ok := export["metadata"].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("infrastructure export metadata must be an object")
+		return "", errors.New("infrastructure export metadata must be an object")
 	}
 	backendSerial, err := exactUnsignedJSONInteger(metadata["backendSerial"])
 	if err != nil {
-		return "", fmt.Errorf("infrastructure export backendSerial must be an unsigned integer")
+		return "", errors.New("infrastructure export backendSerial must be an unsigned integer")
 	}
 	spec, ok := export["spec"].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("infrastructure export spec must be an object")
+		return "", errors.New("infrastructure export spec must be an object")
 	}
 	resources, err := objectArray(spec, "resources", "infrastructure export")
 	if err != nil {
@@ -1650,11 +1652,11 @@ func canonicalInfrastructureExportPayloadDigest(export map[string]any, environme
 	}
 	evidence, ok := spec["evidence"].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("infrastructure export evidence must be an object")
+		return "", errors.New("infrastructure export evidence must be an object")
 	}
 	provenanceValue, ok := evidence["provenance"].(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("infrastructure export provenance evidence must be an object")
+		return "", errors.New("infrastructure export provenance evidence must be an object")
 	}
 	payload := infrastructureExportSignedPayload{
 		APIVersion: fmt.Sprint(export["apiVersion"]),
@@ -1739,8 +1741,8 @@ func loadPreviousInfrastructureExportStates(schemaRoot, previousRoot, previousRe
 				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendSerial must be an unsigned integer", stack)
 			}
 			backendStateDigest := fmt.Sprint(metadata["backendStateDigest"])
-			if err := release.ValidateDigest(backendStateDigest); err != nil {
-				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendStateDigest: %w", stack, err)
+			if digestErr := release.ValidateDigest(backendStateDigest); digestErr != nil {
+				return nil, fmt.Errorf("previous repository infrastructure export stack %s backendStateDigest: %w", stack, digestErr)
 			}
 			identity := environment + "/" + stack
 			if _, duplicate := states[identity]; duplicate {
@@ -1827,7 +1829,7 @@ func validateInfrastructureExports(document map[string]any, environment string, 
 	for _, export := range exports {
 		metadata, ok := export["metadata"].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("infrastructure export metadata must be an object")
+			return nil, errors.New("infrastructure export metadata must be an object")
 		}
 		stack := fmt.Sprint(metadata["stack"])
 		if metadata["environment"] != environment {
@@ -1914,8 +1916,8 @@ func validateInfrastructureExports(document map[string]any, environment string, 
 		if !safeReferenceURI(provenance.URI, false) || !infrastructureExportProvenancePattern.MatchString(provenance.URI) {
 			return nil, fmt.Errorf("infrastructure export stack %s has unsafe or non-canonical provenance evidence URI", stack)
 		}
-		if err := release.ValidateDigest(provenance.Digest); err != nil {
-			return nil, fmt.Errorf("infrastructure export stack %s provenance evidence: %w", stack, err)
+		if digestErr := release.ValidateDigest(provenance.Digest); digestErr != nil {
+			return nil, fmt.Errorf("infrastructure export stack %s provenance evidence: %w", stack, digestErr)
 		}
 		signature, ok := evidence["signature"].(map[string]any)
 		if !ok {
@@ -1971,11 +1973,11 @@ func infrastructureExportResourcesSorted(resources []infrastructureExportResourc
 
 func verifyInfrastructureExportSignature(signature map[string]any, payload []byte, generatedAt time.Time, context *infrastructureExportValidationContext) error {
 	if fmt.Sprint(signature["algorithm"]) != "EC_SIGN_P256_SHA256" {
-		return fmt.Errorf("signature algorithm must be EC_SIGN_P256_SHA256")
+		return errors.New("signature algorithm must be EC_SIGN_P256_SHA256")
 	}
 	keyVersion := fmt.Sprint(signature["keyVersion"])
 	if !infrastructureExportKeyVersionPattern.MatchString(keyVersion) {
-		return fmt.Errorf("signature keyVersion must be the exact bootstrap infrastructure-export key version")
+		return errors.New("signature keyVersion must be the exact bootstrap infrastructure-export key version")
 	}
 	anchor, trusted := context.trustAnchors[keyVersion]
 	if !trusted {
@@ -2000,7 +2002,7 @@ func verifyInfrastructureExportSignature(signature map[string]any, payload []byt
 	}
 	declaredPublicKeyDigest := fmt.Sprint(signature["publicKeyDigest"])
 	if subtle.ConstantTimeCompare([]byte(declaredPublicKeyDigest), []byte(embeddedPublicKeyDigest)) != 1 {
-		return fmt.Errorf("signature publicKeyDigest does not match the embedded public key")
+		return errors.New("signature publicKeyDigest does not match the embedded public key")
 	}
 	if subtle.ConstantTimeCompare([]byte(declaredPublicKeyDigest), []byte(anchor.publicKeyDigest)) != 1 ||
 		subtle.ConstantTimeCompare(publicKeyDER, anchor.publicKeyDER) != 1 {
@@ -2009,10 +2011,10 @@ func verifyInfrastructureExportSignature(signature map[string]any, payload []byt
 	payloadHash := sha256.Sum256(payload)
 	expectedPayloadDigest := "sha256:" + hex.EncodeToString(payloadHash[:])
 	if subtle.ConstantTimeCompare([]byte(fmt.Sprint(signature["payloadDigest"])), []byte(expectedPayloadDigest)) != 1 {
-		return fmt.Errorf("signature payloadDigest does not match the canonical export payload")
+		return errors.New("signature payloadDigest does not match the canonical export payload")
 	}
 	if !ecdsa.VerifyASN1(anchor.publicKey, payloadHash[:], signatureValue) {
-		return fmt.Errorf("GCP KMS ECDSA P-256 signature verification failed")
+		return errors.New("GCP KMS ECDSA P-256 signature verification failed")
 	}
 	return nil
 }
@@ -2255,11 +2257,11 @@ func validateDormantArgoCredentialContract(document map[string]any) error {
 func validateArgoCoreConfig(document map[string]any, rendered bool) error {
 	metadata, ok := document["metadata"].(map[string]any)
 	if document["apiVersion"] != "v1" || document["kind"] != "ConfigMap" || !ok || metadata["name"] != "argocd-cm" {
-		return fmt.Errorf("Argo CD core ConfigMap identity must remain canonical")
+		return errors.New("Argo CD core ConfigMap identity must remain canonical")
 	}
 	data, ok := document["data"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("Argo CD core ConfigMap data must be an object")
+		return errors.New("Argo CD core ConfigMap data must be an object")
 	}
 	expected := map[string]string{
 		"admin.enabled":           "false",
@@ -2302,7 +2304,7 @@ func validateArgoCoreConfig(document map[string]any, rendered bool) error {
 func validateArgoRBACPolicyCSV(value any) error {
 	raw, ok := value.(string)
 	if !ok {
-		return fmt.Errorf("Argo CD RBAC policy.csv must be a string")
+		return errors.New("Argo CD RBAC policy.csv must be a string")
 	}
 	lines := strings.Split(strings.TrimSpace(raw), "\n")
 	for _, line := range lines {
@@ -2312,11 +2314,11 @@ func validateArgoRBACPolicyCSV(value any) error {
 		}
 		action := strings.TrimSpace(fields[3])
 		if action == "override" || strings.HasPrefix(action, "action/") {
-			return fmt.Errorf("Argo CD global RBAC must not grant application override or resource-action authority")
+			return errors.New("Argo CD global RBAC must not grant application override or resource-action authority")
 		}
 	}
 	if len(lines) != len(argoRBACPolicyLines) {
-		return fmt.Errorf("Argo CD RBAC policy.csv must contain exactly the reviewed policy rules")
+		return errors.New("Argo CD RBAC policy.csv must contain exactly the reviewed policy rules")
 	}
 	for index, expected := range argoRBACPolicyLines {
 		if strings.TrimSpace(lines[index]) != expected {
@@ -2329,11 +2331,11 @@ func validateArgoRBACPolicyCSV(value any) error {
 func validateArgoRBACConfig(document map[string]any) error {
 	metadata, ok := document["metadata"].(map[string]any)
 	if document["apiVersion"] != "v1" || document["kind"] != "ConfigMap" || !ok || metadata["name"] != "argocd-rbac-cm" {
-		return fmt.Errorf("Argo CD RBAC ConfigMap identity must remain canonical")
+		return errors.New("Argo CD RBAC ConfigMap identity must remain canonical")
 	}
 	data, ok := document["data"].(map[string]any)
 	if !ok || data["policy.default"] != "role:deny-all" || data["policy.matchMode"] != "glob" || data["scopes"] != "[groups]" {
-		return fmt.Errorf("Argo CD RBAC ConfigMap fail-closed defaults must remain canonical")
+		return errors.New("Argo CD RBAC ConfigMap fail-closed defaults must remain canonical")
 	}
 	if err := validateArgoRBACPolicyCSV(data["policy.csv"]); err != nil {
 		return err
@@ -2363,11 +2365,11 @@ func validateInactiveAppProject(document map[string]any, expectedName string) er
 func validateDefaultAppProject(document map[string]any) error {
 	metadata, ok := document["metadata"].(map[string]any)
 	if document["apiVersion"] != "argoproj.io/v1alpha1" || document["kind"] != "AppProject" || !ok || metadata["name"] != "default" || metadata["namespace"] != "argocd" {
-		return fmt.Errorf("default project identity must remain canonical")
+		return errors.New("default project identity must remain canonical")
 	}
 	spec, ok := document["spec"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("default project spec must be an object")
+		return errors.New("default project spec must be an object")
 	}
 	for _, field := range []string{"sourceRepos", "destinations", "clusterResourceWhitelist"} {
 		values, ok := spec[field].([]any)
@@ -2453,7 +2455,7 @@ func ValidateArgoRender(path string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	decoder := yaml.NewDecoder(file)
 	var documents []map[string]any
 	for {
@@ -2524,8 +2526,8 @@ func ValidateArgoRender(path string) error {
 		}
 		location := "memory://" + strings.ToLower(kind) + ".schema.json"
 		compiler := jsonschema.NewCompiler()
-		if err := compiler.AddResource(location, bytes.NewReader(content)); err != nil {
-			return fmt.Errorf("load pinned %s CRD schema: %w", kind, err)
+		if resourceErr := compiler.AddResource(location, bytes.NewReader(content)); resourceErr != nil {
+			return fmt.Errorf("load pinned %s CRD schema: %w", kind, resourceErr)
 		}
 		compiled[kind], err = compiler.Compile(location)
 		if err != nil {
@@ -2585,10 +2587,10 @@ func ValidateArgoRender(path string) error {
 		return fmt.Errorf("unexpected rendered custom-resource counts: Application=%d ApplicationSet=%d AppProject=%d ExternalSecret=%d", counts["Application"], counts["ApplicationSet"], counts["AppProject"], counts["ExternalSecret"])
 	}
 	if imageCount == 0 {
-		return fmt.Errorf("bootstrap render contains no workload images")
+		return errors.New("bootstrap render contains no workload images")
 	}
 	if !coreConfigSeen || !rbacConfigSeen {
-		return fmt.Errorf("bootstrap render lacks the semantically validated Argo CD core or RBAC ConfigMap")
+		return errors.New("bootstrap render lacks the semantically validated Argo CD core or RBAC ConfigMap")
 	}
 	for _, project := range []string{"default", "platform", "services", "workers", "restricted"} {
 		if !inactiveProjects[project] {
@@ -2637,17 +2639,17 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		return nil, fmt.Errorf("parse Argo CD Kustomization: %w", err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, fmt.Errorf("parse Argo CD Kustomization: multiple YAML documents are not allowed")
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("parse Argo CD Kustomization: multiple YAML documents are not allowed")
 	}
 	if document.APIVersion != "kustomize.config.k8s.io/v1beta1" || document.Kind != "Kustomization" {
-		return nil, fmt.Errorf("invalid Argo CD Kustomization identity")
+		return nil, errors.New("invalid Argo CD Kustomization identity")
 	}
 	if document.Namespace != "argocd" || !document.GeneratorOptions.DisableNameSuffixHash || len(document.GeneratorOptions.Annotations) != 0 {
-		return nil, fmt.Errorf("Argo CD Kustomization namespace and stable generator options must remain canonical")
+		return nil, errors.New("Argo CD Kustomization namespace and stable generator options must remain canonical")
 	}
 	if len(document.GeneratorOptions.Labels) != 1 || document.GeneratorOptions.Labels["app.kubernetes.io/part-of"] != "argocd" {
-		return nil, fmt.Errorf("Argo CD Kustomization generator labels must remain canonical")
+		return nil, errors.New("Argo CD Kustomization generator labels must remain canonical")
 	}
 	remoteResources := make([]string, 0, 1)
 	for _, resource := range document.Resources {
@@ -2656,10 +2658,10 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		}
 	}
 	if len(remoteResources) != 1 {
-		return nil, fmt.Errorf("Argo CD Kustomization must contain exactly one remote upstream resource")
+		return nil, errors.New("Argo CD Kustomization must contain exactly one remote upstream resource")
 	}
 	if len(document.ConfigMapGenerator) != 1 {
-		return nil, fmt.Errorf("Argo CD Kustomization must contain exactly one provenance generator and no other generated resources")
+		return nil, errors.New("Argo CD Kustomization must contain exactly one provenance generator and no other generated resources")
 	}
 	provenanceGenerators := 0
 	values := map[string]string{}
@@ -2669,7 +2671,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		}
 		provenanceGenerators++
 		if len(generator.Files) != 0 || len(generator.Envs) != 0 || generator.Behavior != "" || generator.Options != nil {
-			return nil, fmt.Errorf("Argo CD bootstrap provenance must use literal values only")
+			return nil, errors.New("Argo CD bootstrap provenance must use literal values only")
 		}
 		for _, literal := range generator.Literals {
 			parts := strings.SplitN(literal, "=", 2)
@@ -2693,7 +2695,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		}
 	}
 	if provenanceGenerators != 1 {
-		return nil, fmt.Errorf("Argo CD Kustomization must contain exactly one provenance generator")
+		return nil, errors.New("Argo CD Kustomization must contain exactly one provenance generator")
 	}
 	for _, key := range bootstrapProvenanceKeys {
 		if values[key] == "" {
@@ -2701,14 +2703,14 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		}
 	}
 	if values["upstream-version"] != reviewedArgoVersion || values["upstream-revision"] != reviewedArgoRevision || values["upstream-sha256"] != reviewedArgoSHA256 {
-		return nil, fmt.Errorf("Argo CD upstream version, revision, and checksum must equal the reviewed release contract")
+		return nil, errors.New("Argo CD upstream version, revision, and checksum must equal the reviewed release contract")
 	}
 	if err := release.ValidateRevision(values["upstream-revision"]); err != nil {
 		return nil, fmt.Errorf("Argo CD upstream revision: %w", err)
 	}
 	expectedURL := "https://raw.githubusercontent.com/argoproj/argo-cd/" + reviewedArgoRevision + "/manifests/install.yaml"
 	if values["upstream-url"] != expectedURL || remoteResources[0] != expectedURL {
-		return nil, fmt.Errorf("Argo CD Kustomization remote resource and provenance URL must equal the trusted revision-pinned manifest")
+		return nil, errors.New("Argo CD Kustomization remote resource and provenance URL must equal the trusted revision-pinned manifest")
 	}
 	expectedResources := []string{
 		"namespace.yaml",
@@ -2724,7 +2726,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		"../applicationsets/environment-root.yaml",
 	}
 	if len(document.Resources) != len(expectedResources) {
-		return nil, fmt.Errorf("Argo CD Kustomization must contain exactly the reviewed bootstrap resources")
+		return nil, errors.New("Argo CD Kustomization must contain exactly the reviewed bootstrap resources")
 	}
 	for index, resource := range expectedResources {
 		if document.Resources[index] != resource {
@@ -2735,7 +2737,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		return nil, fmt.Errorf("Argo CD upstream checksum: %w", err)
 	}
 	if len(document.Images) != 3 {
-		return nil, fmt.Errorf("Argo CD Kustomization must contain exactly three provenance-bound image overrides")
+		return nil, errors.New("Argo CD Kustomization must contain exactly three provenance-bound image overrides")
 	}
 	imageOverrides := map[string]string{}
 	for _, image := range document.Images {
@@ -2761,7 +2763,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 		delete(imageOverrides, parts[0])
 	}
 	if len(imageOverrides) != 0 {
-		return nil, fmt.Errorf("Argo CD Kustomization contains an image override without matching provenance")
+		return nil, errors.New("Argo CD Kustomization contains an image override without matching provenance")
 	}
 	if err := validateBootstrapPatches(document.Patches); err != nil {
 		return nil, err
@@ -2771,7 +2773,7 @@ func BootstrapProvenance(content []byte) (map[string]string, error) {
 
 func validateBootstrapPatches(patches []bootstrapPatch) error {
 	if len(patches) != 4 {
-		return fmt.Errorf("Argo CD Kustomization must contain exactly four reviewed patches")
+		return errors.New("Argo CD Kustomization must contain exactly four reviewed patches")
 	}
 	for index, expectedPath := range []string{"notifications.yaml", "resource-customizations.yaml"} {
 		patch := patches[index]
@@ -2781,7 +2783,7 @@ func validateBootstrapPatches(patches []bootstrapPatch) error {
 	}
 	rbac := patches[2]
 	if rbac.Path != "" || rbac.Target.Group != "" || rbac.Target.Version != "v1" || rbac.Target.Kind != "ConfigMap" || rbac.Target.Name != "argocd-rbac-cm" {
-		return fmt.Errorf("Argo CD Kustomization must contain the canonical RBAC ConfigMap patch")
+		return errors.New("Argo CD Kustomization must contain the canonical RBAC ConfigMap patch")
 	}
 	var rbacDocument map[string]any
 	rbacDecoder := yaml.NewDecoder(strings.NewReader(rbac.Patch))
@@ -2789,32 +2791,32 @@ func validateBootstrapPatches(patches []bootstrapPatch) error {
 		return fmt.Errorf("parse Argo CD RBAC patch: %w", err)
 	}
 	var rbacTrailing any
-	if err := rbacDecoder.Decode(&rbacTrailing); err != io.EOF {
-		return fmt.Errorf("parse Argo CD RBAC patch: multiple YAML documents are not allowed")
+	if err := rbacDecoder.Decode(&rbacTrailing); !errors.Is(err, io.EOF) {
+		return errors.New("parse Argo CD RBAC patch: multiple YAML documents are not allowed")
 	}
 	if err := requireExactObjectKeys(rbacDocument, "Argo CD RBAC patch", "apiVersion", "kind", "metadata", "data"); err != nil {
 		return err
 	}
 	metadata, ok := rbacDocument["metadata"].(map[string]any)
 	if !ok || metadata["name"] != "argocd-rbac-cm" || len(metadata) != 1 || rbacDocument["apiVersion"] != "v1" || rbacDocument["kind"] != "ConfigMap" {
-		return fmt.Errorf("Argo CD RBAC patch identity must remain canonical")
+		return errors.New("Argo CD RBAC patch identity must remain canonical")
 	}
 	data, ok := rbacDocument["data"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("Argo CD RBAC patch data must be an object")
+		return errors.New("Argo CD RBAC patch data must be an object")
 	}
 	if err := requireExactObjectKeys(data, "Argo CD RBAC patch data", "policy.default", "policy.matchMode", "scopes", "policy.csv"); err != nil {
 		return err
 	}
 	if data["policy.default"] != "role:deny-all" || data["policy.matchMode"] != "glob" || data["scopes"] != "[groups]" {
-		return fmt.Errorf("Argo CD RBAC patch fail-closed defaults must remain canonical")
+		return errors.New("Argo CD RBAC patch fail-closed defaults must remain canonical")
 	}
 	if err := validateArgoRBACPolicyCSV(data["policy.csv"]); err != nil {
 		return err
 	}
 	server := patches[3]
 	if server.Path != "" || server.Target.Group != "apps" || server.Target.Version != "v1" || server.Target.Kind != "Deployment" || server.Target.Name != "argocd-server" {
-		return fmt.Errorf("Argo CD Kustomization must contain the canonical server availability patch")
+		return errors.New("Argo CD Kustomization must contain the canonical server availability patch")
 	}
 	var operations []map[string]any
 	serverDecoder := yaml.NewDecoder(strings.NewReader(server.Patch))
@@ -2822,15 +2824,15 @@ func validateBootstrapPatches(patches []bootstrapPatch) error {
 		return fmt.Errorf("parse Argo CD server patch: %w", err)
 	}
 	var serverTrailing any
-	if err := serverDecoder.Decode(&serverTrailing); err != io.EOF {
-		return fmt.Errorf("parse Argo CD server patch: multiple YAML documents are not allowed")
+	if err := serverDecoder.Decode(&serverTrailing); !errors.Is(err, io.EOF) {
+		return errors.New("parse Argo CD server patch: multiple YAML documents are not allowed")
 	}
 	if len(operations) != 1 {
-		return fmt.Errorf("Argo CD server patch must only set two replicas")
+		return errors.New("Argo CD server patch must only set two replicas")
 	}
 	replicas, replicasAreInteger := operations[0]["value"].(int)
 	if len(operations[0]) != 3 || operations[0]["op"] != "replace" || operations[0]["path"] != "/spec/replicas" || !replicasAreInteger || replicas != 2 {
-		return fmt.Errorf("Argo CD server patch must only set two replicas")
+		return errors.New("Argo CD server patch must only set two replicas")
 	}
 	return nil
 }
@@ -2842,7 +2844,7 @@ func validateApplicationSet(content []byte, filename string, contract applicatio
 		return fmt.Errorf("parse %s: %w", filename, err)
 	}
 	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parse %s: multiple YAML documents are not allowed", filename)
 	}
 	if err := requireExactObjectKeys(applicationSet, filename, "apiVersion", "kind", "metadata", "spec"); err != nil {
@@ -3007,8 +3009,8 @@ func validateApplicationSet(content []byte, filename string, contract applicatio
 		return fmt.Errorf("%s template source repoURL, targetRevision, and path must remain canonical", filename)
 	}
 	if contract.sourceImage != "" {
-		kustomize, ok := source["kustomize"].(map[string]any)
-		if !ok {
+		kustomize, kustomizeOK := source["kustomize"].(map[string]any)
+		if !kustomizeOK {
 			return fmt.Errorf("%s template source.kustomize must be an object", filename)
 		}
 		if err := requireExactObjectKeys(kustomize, filename+" template source.kustomize", "images"); err != nil {
@@ -3019,8 +3021,8 @@ func validateApplicationSet(content []byte, filename string, contract applicatio
 		}
 	}
 	if contract.sourceNamePrefix != "" {
-		kustomize, ok := source["kustomize"].(map[string]any)
-		if !ok {
+		kustomize, kustomizeOK := source["kustomize"].(map[string]any)
+		if !kustomizeOK {
 			return fmt.Errorf("%s template source.kustomize must be an object", filename)
 		}
 		if err := requireExactObjectKeys(kustomize, filename+" template source.kustomize", "namePrefix"); err != nil {
@@ -3096,15 +3098,15 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateArgoCoreConfig(coreConfig, false); err != nil {
-		return err
+	if validationErr := validateArgoCoreConfig(coreConfig, false); validationErr != nil {
+		return validationErr
 	}
 	kustomization, err := os.ReadFile(filepath.Join(root, "controllers", "argocd", "kustomization.yaml"))
 	if err != nil {
 		return err
 	}
-	if _, err := BootstrapProvenance(kustomization); err != nil {
-		return err
+	if _, provenanceErr := BootstrapProvenance(kustomization); provenanceErr != nil {
+		return provenanceErr
 	}
 	rbacText := string(rbac) + "\n" + string(kustomization)
 	for _, invariant := range []string{`admin.enabled: "false"`, `users.anonymous.enabled: "false"`, "policy.default: role:deny-all"} {
@@ -3113,7 +3115,7 @@ func validateFailClosedSources(root string) error {
 		}
 	}
 	if regexp.MustCompile(`(?m)^\s*p, role:deny-all,`).MatchString(rbacText) {
-		return fmt.Errorf("the empty default RBAC role must not contain deny rules that override mapped roles")
+		return errors.New("the empty default RBAC role must not contain deny rules that override mapped roles")
 	}
 	for _, key := range []string{"argocd-image", "dex-image", "redis-image"} {
 		image := reviewedBootstrapImages[key]
@@ -3134,8 +3136,8 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateDormantArgoCredentialContract(credentialContract); err != nil {
-		return err
+	if validationErr := validateDormantArgoCredentialContract(credentialContract); validationErr != nil {
+		return validationErr
 	}
 	credentialText := string(credentials)
 	for _, forbidden := range []string{"kind: ExternalSecret", "secretStoreRef:", "remoteRef:"} {
@@ -3198,9 +3200,9 @@ func validateFailClosedSources(root string) error {
 	sort.Strings(applicationSetNames)
 	for _, name := range applicationSetNames {
 		contract := applicationSets[name]
-		content, err := os.ReadFile(filepath.Join(root, "controllers", "applicationsets", name))
-		if err != nil {
-			return err
+		content, readErr := os.ReadFile(filepath.Join(root, "controllers", "applicationsets", name))
+		if readErr != nil {
+			return readErr
 		}
 		text := string(content)
 		for _, invariant := range append([]string{"matrix:", "elementsYaml:", "if .active", "environments/*/" + contract.record}, contract.invariants...) {
@@ -3208,8 +3210,8 @@ func validateFailClosedSources(root string) error {
 				return fmt.Errorf("%s lacks dynamic release gating %q", name, invariant)
 			}
 		}
-		if err := validateApplicationSet(content, name, contract); err != nil {
-			return err
+		if validationErr := validateApplicationSet(content, name, contract); validationErr != nil {
+			return validationErr
 		}
 		if strings.Contains(text, "elements: []") {
 			return fmt.Errorf("%s uses a hand-edited static generator", name)
@@ -3224,9 +3226,9 @@ func validateFailClosedSources(root string) error {
 	}
 	for _, project := range []string{"platform", "services", "workers", "restricted"} {
 		relative := filepath.Join("projects", project+".appproject.yaml")
-		documents, err := readYAMLObjects(filepath.Join(root, relative), filepath.ToSlash(relative))
-		if err != nil {
-			return err
+		documents, readErr := readYAMLObjects(filepath.Join(root, relative), filepath.ToSlash(relative))
+		if readErr != nil {
+			return readErr
 		}
 		projectCount := 0
 		defaultCount := 0
@@ -3235,16 +3237,16 @@ func validateFailClosedSources(root string) error {
 			name := fmt.Sprint(metadata["name"])
 			switch name {
 			case project:
-				if err := validateInactiveAppProject(document, project); err != nil {
-					return err
+				if validationErr := validateInactiveAppProject(document, project); validationErr != nil {
+					return validationErr
 				}
 				projectCount++
 			case "default":
 				if project != "restricted" {
 					return fmt.Errorf("unexpected default project in %s", filepath.ToSlash(relative))
 				}
-				if err := validateDefaultAppProject(document); err != nil {
-					return err
+				if validationErr := validateDefaultAppProject(document); validationErr != nil {
+					return validationErr
 				}
 				defaultCount++
 			default:
@@ -3263,9 +3265,9 @@ func validateFailClosedSources(root string) error {
 		}
 	}
 	for _, workflow := range []string{"promotion.yml", "rollback-verification.yml"} {
-		content, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
-		if err != nil {
-			return err
+		content, readErr := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
+		if readErr != nil {
+			return readErr
 		}
 		text := string(content)
 		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09`, `!= qualified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", `[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]`, `if [[ "$RELEASE_CLASS" = platform ]]`, `[[ "$ARTIFACT_REFERENCE" != oci://* ]]`} {
@@ -3287,9 +3289,9 @@ func validateFailClosedSources(root string) error {
 		return err
 	}
 	for _, workflow := range []string{"pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml"} {
-		content, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
-		if err != nil {
-			return err
+		content, readErr := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
+		if readErr != nil {
+			return readErr
 		}
 		text := string(content)
 		for _, invariant := range []string{
@@ -3333,7 +3335,7 @@ func validateFailClosedSources(root string) error {
 		return err
 	}
 	if !strings.Contains(string(justfile), "USE_BAZEL_VERSION=9.2.0 bazelisk") {
-		return fmt.Errorf("just bazel-test lacks a pinned Bazel release")
+		return errors.New("just bazel-test lacks a pinned Bazel release")
 	}
 	namespace, err := os.ReadFile(filepath.Join(root, "controllers", "argocd", "namespace.yaml"))
 	if err != nil {

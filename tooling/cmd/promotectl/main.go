@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -172,11 +174,15 @@ func verifyBootstrap(root string, fetch bool) error {
 		return nil
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	response, err := client.Get(provenance["upstream-url"])
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, provenance["upstream-url"], nil)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("bootstrap fetch returned %s", response.Status)
 	}
@@ -194,7 +200,7 @@ func verifyBootstrap(root string, fetch bool) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fail(fmt.Errorf("expected validate, validate-bootstrap, render, receipt, rollback, verify-bootstrap, verify-transition, or version"))
+		fail(errors.New("expected validate, validate-bootstrap, render, receipt, rollback, verify-bootstrap, verify-transition, or version"))
 	}
 	switch os.Args[1] {
 	case "validate":
@@ -233,7 +239,7 @@ func main() {
 		path := flags.String("file", "", "canonical rendered bootstrap YAML")
 		_ = flags.Parse(os.Args[2:])
 		if *path == "" {
-			fail(fmt.Errorf("--file is required"))
+			fail(errors.New("--file is required"))
 		}
 		if err := policy.ValidateArgoRender(*path); err != nil {
 			fail(err)

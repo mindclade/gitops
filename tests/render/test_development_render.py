@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import tempfile
@@ -47,7 +48,9 @@ class DevelopmentRenderTest(unittest.TestCase):
     def test_render_inputs_have_a_stable_order(self):
         rendered = []
         for name in DOCUMENTS:
-            rendered.append((name, json.loads((ROOT / "environments/development" / name).read_text())))
+            rendered.append(
+                (name, json.loads((ROOT / "environments/development" / name).read_text()))
+            )
         first = json.dumps(rendered, sort_keys=True, separators=(",", ":"))
         second = json.dumps(rendered, sort_keys=True, separators=(",", ":"))
         self.assertEqual(first, second)

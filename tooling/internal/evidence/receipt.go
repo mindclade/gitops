@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -62,7 +63,7 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 		return fmt.Errorf("unknown release class %q", receipt.ReleaseClass)
 	}
 	if !componentPattern.MatchString(receipt.Component) || !componentPattern.MatchString(receipt.Cluster) {
-		return fmt.Errorf("component and cluster must be canonical identifiers")
+		return errors.New("component and cluster must be canonical identifiers")
 	}
 	if err := release.ValidateRevision(receipt.SourceRevision); err != nil {
 		return err
@@ -77,55 +78,55 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 		}
 	}
 	if receipt.ArtifactDigest == receipt.PriorDigest {
-		return fmt.Errorf("artifact and prior digests must differ")
+		return errors.New("artifact and prior digests must differ")
 	}
 	if err := release.ValidateArtifactReference(receipt.ArtifactReference, receipt.ReleaseClass); err != nil {
 		return err
 	}
 	if !strings.HasSuffix(receipt.ArtifactReference, "@"+receipt.ArtifactDigest) {
-		return fmt.Errorf("artifact reference digest must match artifact digest")
+		return errors.New("artifact reference digest must match artifact digest")
 	}
 	if !safeHTTPSIdentity(receipt.Signer) {
-		return fmt.Errorf("signer must be an HTTPS workload identity URI")
+		return errors.New("signer must be an HTTPS workload identity URI")
 	}
 	if !safeHTTPSIdentity(receipt.Issuer) {
-		return fmt.Errorf("issuer must be an HTTPS identity provider URI")
+		return errors.New("issuer must be an HTTPS identity provider URI")
 	}
 	issuedAt, err := time.Parse(time.RFC3339, receipt.IssuedAt)
 	if err != nil || !strings.HasSuffix(receipt.IssuedAt, "Z") || issuedAt.Format(time.RFC3339) != receipt.IssuedAt {
-		return fmt.Errorf("issuedAt must be canonical RFC3339 UTC")
+		return errors.New("issuedAt must be canonical RFC3339 UTC")
 	}
 	now = now.UTC()
 	if issuedAt.After(now.Add(maxFutureSkew)) {
-		return fmt.Errorf("issuedAt exceeds the five-minute future-skew allowance")
+		return errors.New("issuedAt exceeds the five-minute future-skew allowance")
 	}
 	if issuedAt.Before(now.Add(-maxReceiptAge)) {
-		return fmt.Errorf("receipt evidence is older than 24 hours")
+		return errors.New("receipt evidence is older than 24 hours")
 	}
 	if receipt.Repository != "mindclade/gitops" {
-		return fmt.Errorf("receipt repository must be mindclade/gitops")
+		return errors.New("receipt repository must be mindclade/gitops")
 	}
 	if !positiveIntegerPattern.MatchString(receipt.WorkflowRunID) || !positiveIntegerPattern.MatchString(receipt.WorkflowRunAttempt) {
-		return fmt.Errorf("workflow run ID and attempt must be positive integers")
+		return errors.New("workflow run ID and attempt must be positive integers")
 	}
 	if err := release.ValidateRevision(receipt.CheckedOutRevision); err != nil {
 		return fmt.Errorf("checked-out revision: %w", err)
 	}
 	if !requesterPattern.MatchString(receipt.Requester) {
-		return fmt.Errorf("requester must be a nonempty workflow actor")
+		return errors.New("requester must be a nonempty workflow actor")
 	}
 	unique := map[string]bool{}
 	for _, approval := range receipt.Approvals {
 		if strings.TrimSpace(approval) != approval || strings.ContainsAny(approval, "\r\n") || len(approval) < 3 || len(approval) > 256 {
-			return fmt.Errorf("approval records must be canonical strings between 3 and 256 characters")
+			return errors.New("approval records must be canonical strings between 3 and 256 characters")
 		}
 		if unique[approval] {
-			return fmt.Errorf("approval records must be unique")
+			return errors.New("approval records must be unique")
 		}
 		unique[approval] = true
 	}
 	if len(unique) < 2 {
-		return fmt.Errorf("at least two distinct approval records are required")
+		return errors.New("at least two distinct approval records are required")
 	}
 	context := "github-environment:" + receipt.Environment + "-promotion"
 	hasContext := false
@@ -145,7 +146,7 @@ func (receipt Receipt) ValidateAt(now time.Time) error {
 		}
 	}
 	if !hasContext || governanceEvidenceCount != 1 {
-		return fmt.Errorf("receipt requires exact environment context and exactly one immutable governance evidence digest")
+		return errors.New("receipt requires exact environment context and exactly one immutable governance evidence digest")
 	}
 	return nil
 }

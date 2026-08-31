@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import re
@@ -35,9 +36,15 @@ class ProductionRenderTest(unittest.TestCase):
             self.assertIs(document["active"], False)
             self.assertEqual(document["environment"], "production")
         self.assertEqual(json.loads((directory / "cluster-set.yaml").read_text())["clusters"], [])
-        self.assertEqual(json.loads((directory / "platform-releases.yaml").read_text())["releases"], [])
-        self.assertEqual(json.loads((directory / "service-releases.yaml").read_text())["releases"], [])
-        self.assertEqual(json.loads((directory / "worker-releases.yaml").read_text())["releases"], [])
+        self.assertEqual(
+            json.loads((directory / "platform-releases.yaml").read_text())["releases"], []
+        )
+        self.assertEqual(
+            json.loads((directory / "service-releases.yaml").read_text())["releases"], []
+        )
+        self.assertEqual(
+            json.loads((directory / "worker-releases.yaml").read_text())["releases"], []
+        )
 
     def test_no_mutable_production_reference(self):
         text = "\n".join(path.read_text() for path in ROOT.rglob("*.yaml"))

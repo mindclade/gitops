@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import tempfile
@@ -27,7 +28,11 @@ ROOT, _ROOT_TEMPORARY = _repository_root()
 class StagingRenderTest(unittest.TestCase):
     def test_staging_requires_explicit_activation(self):
         directory = ROOT / "environments/staging"
-        documents = [json.loads(path.read_text()) for path in sorted(directory.glob("*.yaml")) if path.name != "kustomization.yaml"]
+        documents = [
+            json.loads(path.read_text())
+            for path in sorted(directory.glob("*.yaml"))
+            if path.name != "kustomization.yaml"
+        ]
         self.assertEqual(len(documents), 7)
         self.assertTrue(all(document["environment"] == "staging" for document in documents))
         self.assertTrue(all(document["active"] is False for document in documents))

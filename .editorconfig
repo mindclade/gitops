@@ -4,19 +4,27 @@ root = true
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
+indent_style = space
+indent_size = 2
+max_line_length = 100
 trim_trailing_whitespace = true
+
+[*.py]
+indent_size = 4
 
 [*.go]
 indent_style = tab
-indent_size = 4
+indent_size = tab
+tab_width = 8
 
-[*.{py,bzl}]
+[*.rs]
 indent_style = space
 indent_size = 4
-
-[*.{yaml,yml,json,md}]
-indent_style = space
-indent_size = 2
 
 [Makefile]
 indent_style = tab
+indent_size = tab
+
+[*.md]
+max_line_length = off
+trim_trailing_whitespace = false

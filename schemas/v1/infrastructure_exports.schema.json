@@ -7,14 +7,14 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "environment", "active", "exports"],
   "properties": {
-    "schemaVersion": {"const": "v1"},
-    "environment": {"enum": ["development", "staging", "production", "restricted"]},
-    "active": {"type": "boolean"},
+    "schemaVersion": { "const": "v1" },
+    "environment": { "enum": ["development", "staging", "production", "restricted"] },
+    "active": { "type": "boolean" },
     "exports": {
       "type": "array",
       "maxItems": 7,
       "uniqueItems": true,
-      "items": {"$ref": "#/$defs/infrastructureExport"}
+      "items": { "$ref": "#/$defs/infrastructureExport" }
     }
   },
   "$defs": {
@@ -23,25 +23,56 @@
       "additionalProperties": false,
       "required": ["apiVersion", "kind", "metadata", "spec"],
       "properties": {
-        "apiVersion": {"const": "infrastructure.mindclade.dev/v1"},
-        "kind": {"const": "InfrastructureExport"},
+        "apiVersion": { "const": "infrastructure.mindclade.dev/v1" },
+        "kind": { "const": "InfrastructureExport" },
         "metadata": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["environment", "stack", "sourceRepository", "sourceCommit", "root", "planDigest", "providerLockDigest", "backendStateDigest", "backendLineage", "backendSerial", "schemaDigest", "generatedAt"],
+          "required": [
+            "environment",
+            "stack",
+            "sourceRepository",
+            "sourceCommit",
+            "root",
+            "planDigest",
+            "providerLockDigest",
+            "backendStateDigest",
+            "backendLineage",
+            "backendSerial",
+            "schemaDigest",
+            "generatedAt"
+          ],
           "properties": {
-            "environment": {"enum": ["development", "staging", "production", "restricted"]},
-            "stack": {"enum": ["foundation", "network", "artifacts", "data-services", "clusters", "ci-execution", "observability"]},
-            "sourceRepository": {"const": "mindclade/infrastructure-live"},
-            "sourceCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-            "root": {"type": "string", "pattern": "^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$"},
-            "planDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            "providerLockDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            "backendStateDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-            "backendLineage": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-            "backendSerial": {"type": "integer", "minimum": 0},
-            "schemaDigest": {"const": "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"},
-            "generatedAt": {"type": "string", "format": "date-time"}
+            "environment": { "enum": ["development", "staging", "production", "restricted"] },
+            "stack": {
+              "enum": [
+                "foundation",
+                "network",
+                "artifacts",
+                "data-services",
+                "clusters",
+                "ci-execution",
+                "observability"
+              ]
+            },
+            "sourceRepository": { "const": "mindclade/infrastructure-live" },
+            "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "root": {
+              "type": "string",
+              "pattern": "^opentofu/live/(development|staging|production|restricted)/(foundation|network|artifacts|data-services|clusters|ci-execution|observability)$"
+            },
+            "planDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "providerLockDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "backendStateDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "backendLineage": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "backendSerial": { "type": "integer", "minimum": 0 },
+            "schemaDigest": {
+              "const": "sha256:12fddd3a67b663499a8f5d3972cce56343da0c43795ac5caf8891c176957648a"
+            },
+            "generatedAt": { "type": "string", "format": "date-time" }
           }
         },
         "spec": {
@@ -58,9 +89,33 @@
                 "additionalProperties": false,
                 "required": ["kind", "name", "uri"],
                 "properties": {
-                  "kind": {"enum": ["project", "network", "subnetwork", "private-dns-zone", "artifact-registry", "artifact-bucket", "database-instance", "topic", "kms-key-reference", "gke-cluster", "cluster-membership", "workload-identity-pool", "build-execution-pool", "log-bucket", "metrics-scope", "argocd-prerequisite"]},
-                  "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,126}$"},
-                  "uri": {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^(https:)?//[^/?#@\\s]+/[^?#\\s]+$"}
+                  "kind": {
+                    "enum": [
+                      "project",
+                      "network",
+                      "subnetwork",
+                      "private-dns-zone",
+                      "artifact-registry",
+                      "artifact-bucket",
+                      "database-instance",
+                      "topic",
+                      "kms-key-reference",
+                      "gke-cluster",
+                      "cluster-membership",
+                      "workload-identity-pool",
+                      "build-execution-pool",
+                      "log-bucket",
+                      "metrics-scope",
+                      "argocd-prerequisite"
+                    ]
+                  },
+                  "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{1,126}$" },
+                  "uri": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "pattern": "^(https:)?//[^/?#@\\s]+/[^?#\\s]+$"
+                  }
                 }
               }
             },
@@ -72,17 +127,32 @@
                 "signature": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["algorithm", "keyVersion", "publicKey", "publicKeyDigest", "value", "payloadDigest"],
+                  "required": [
+                    "algorithm",
+                    "keyVersion",
+                    "publicKey",
+                    "publicKeyDigest",
+                    "value",
+                    "payloadDigest"
+                  ],
                   "properties": {
-                    "algorithm": {"const": "EC_SIGN_P256_SHA256"},
-                    "keyVersion": {"type": "string", "pattern": "^projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]{5,})/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/[1-9][0-9]*$"},
-                    "publicKey": {"type": "string", "pattern": "^[A-Za-z0-9+/]{122}==$"},
-                    "publicKeyDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-                    "value": {"type": "string", "minLength": 12, "maxLength": 344, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
-                    "payloadDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+                    "algorithm": { "const": "EC_SIGN_P256_SHA256" },
+                    "keyVersion": {
+                      "type": "string",
+                      "pattern": "^projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]{5,})/locations/us-central1/keyRings/bootstrap-signing/cryptoKeys/infrastructure-export/cryptoKeyVersions/[1-9][0-9]*$"
+                    },
+                    "publicKey": { "type": "string", "pattern": "^[A-Za-z0-9+/]{122}==$" },
+                    "publicKeyDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                    "value": {
+                      "type": "string",
+                      "minLength": 12,
+                      "maxLength": 344,
+                      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                    },
+                    "payloadDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
                   }
                 },
-                "provenance": {"$ref": "#/$defs/evidenceReference"}
+                "provenance": { "$ref": "#/$defs/evidenceReference" }
               }
             }
           }
@@ -94,13 +164,23 @@
       "additionalProperties": false,
       "required": ["uri", "digest"],
       "properties": {
-        "uri": {"type": "string", "maxLength": 2048, "pattern": "^https://github\\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$"},
-        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        "uri": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://github\\.com/mindclade/infrastructure-live/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*$"
+        },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }
     }
   },
   "allOf": [
-    {"if": {"properties": {"active": {"const": true}}}, "then": {"properties": {"exports": {"minItems": 1}}}},
-    {"if": {"properties": {"active": {"const": false}}}, "then": {"properties": {"exports": {"maxItems": 0}}}}
+    {
+      "if": { "properties": { "active": { "const": true } } },
+      "then": { "properties": { "exports": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "active": { "const": false } } },
+      "then": { "properties": { "exports": { "maxItems": 0 } } }
+    }
   ]
 }

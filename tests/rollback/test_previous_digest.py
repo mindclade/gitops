@@ -1,3 +1,4 @@
+# pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
 import json
 import os
 import tempfile
@@ -40,9 +41,7 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn("PROMOTION_TRUSTED_SIGNER", workflow)
         self.assertIn("PROMOTION_TRUSTED_ISSUER", workflow)
         self.assertIn("options: [production]", workflow)
-        self.assertNotIn(
-            "options: [development, staging, production, restricted]", workflow
-        )
+        self.assertNotIn("options: [development, staging, production, restricted]", workflow)
         self.assertIn("name: production-promotion", workflow)
         self.assertNotIn("name: ${{ inputs.environment }}-promotion", workflow)
         self.assertIn("previous_digest:", workflow)
@@ -58,7 +57,7 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$PREVIOUS_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
         self.assertIn("EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09", workflow)
-        self.assertIn('!= qualified-v1', workflow)
+        self.assertIn("!= qualified-v1", workflow)
         self.assertIn('[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]', workflow)
         self.assertIn('[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
         self.assertNotIn("signer:\n        description:", workflow)
@@ -76,9 +75,7 @@ class PreviousDigestTest(unittest.TestCase):
             promotion_workflow,
         )
         self.assertIn("name: production-promotion", promotion_workflow)
-        self.assertNotIn(
-            "name: ${{ inputs.environment }}-promotion", promotion_workflow
-        )
+        self.assertNotIn("name: ${{ inputs.environment }}-promotion", promotion_workflow)
 
     def test_emergency_runbook_stops_at_jit_09_without_claiming_a_receipt(self):
         runbook = (ROOT / "runbooks/emergency-rollback.md").read_text()

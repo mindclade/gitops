@@ -6,11 +6,11 @@ digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 prior := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 test_rejects_mutable_reference if {
-  result := deny with input as {"releases": [{"component": "api", "artifact": "registry/api:latest", "digest": "latest", "priorDigest": prior}]}
-  count(result) == 1
+	result := deny with input as {"releases": [{"component": "api", "artifact": "registry/api:latest", "digest": "latest", "priorDigest": prior}]}
+	count(result) == 1
 }
 
 test_accepts_digest_reference if {
-  result := deny with input as {"releases": [{"component": "api", "artifact": concat("@", ["registry/api", digest]), "digest": digest, "priorDigest": prior}]}
-  count(result) == 0
+	result := deny with input as {"releases": [{"component": "api", "artifact": concat("@", ["registry/api", digest]), "digest": digest, "priorDigest": prior}]}
+	count(result) == 0
 }
