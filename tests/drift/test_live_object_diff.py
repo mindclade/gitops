@@ -518,6 +518,13 @@ class LiveObjectDiffTest(unittest.TestCase):
             configured,
             {"github-actions": "/", "gomod": "/tooling", "bazel": "/"},
         )
+        module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
+        for required in (
+            'go_mod_from_file = "//tooling:go.mod"',
+            'go_sum_from_file = "//tooling:go.sum"',
+            "go_deps.from_file(go_mod = go_mod_from_file)",
+        ):
+            self.assertIn(required, module)
 
     def test_component_metadata_has_a_coherent_authority_contract(self):
         text = (ROOT / "component.yaml").read_text()
