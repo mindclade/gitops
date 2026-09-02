@@ -12,10 +12,8 @@
   outputs =
     { self, nixpkgs }:
     let
-      systems = [
-        "aarch64-darwin"
-        "x86_64-linux"
-      ];
+      policy = import ./generated/nix-bazel-policy.nix;
+      systems = policy.spec.systems;
       forAllSystems = nixpkgs.lib.genAttrs systems;
       perSystem =
         system:
@@ -51,10 +49,7 @@
               xz
               zip
             ]
-            ++ lib.optionals stdenv.hostPlatform.isDarwin [
-              darwin.cctools
-              darwin.cctools.libtool
-            ];
+            ++ lib.optionals stdenv.hostPlatform.isDarwin [ darwin.cctools ];
           bazel = pkgs.writeShellApplication {
             name = "bazel";
             runtimeInputs = bazelRuntimeInputs;
@@ -78,46 +73,62 @@
               exec ${pkgs.bazel_9}/bin/bazel "''${startup_flags[@]}" "$@"
             '';
           };
-          moduleLock = "${self}/MODULE.bazel.lock";
-          toolchainManifest = pkgs.writeTextDir "share/mindclade/toolchain-manifest.json" (
-            builtins.toJSON {
-              schema_version = "mindclade-toolchain.v1";
-              repository = "mindclade/gitops";
-              inherit system;
-              nixpkgs = {
-                revision = nixpkgs.rev;
-                nar_hash = nixpkgs.narHash;
-              };
-              flake_lock_sha256 = builtins.hashFile "sha256" "${self}/flake.lock";
-              module_lock_sha256 =
-                if builtins.pathExists moduleLock then builtins.hashFile "sha256" moduleLock else null;
-              bazel = {
-                version = pkgs.bazel_9.version;
-                store_path = "${pkgs.bazel_9}";
-              };
-              startup_jdk = {
-                version = pkgs.jdk21_headless.version;
-                store_path = "${pkgs.jdk21_headless}";
-              };
-              native_cc_store_path = "${pkgs.stdenv.cc}";
-            }
-          );
-          biomeTarget =
-            {
-              aarch64-darwin = {
-                asset = "biome-darwin-arm64";
-                hash = "sha256-UA/Ij/QJJe1CKtzKa4o+kFJu6QTSuhCw7eDNBl/KPSs=";
-              };
-              x86_64-linux = {
-                asset = "biome-linux-x64";
-                hash = "sha256-klh/rBAuM8v4qx/bSIT49Ny/ERcln8bezVy1tfXkjmc=";
-              };
-            }
-            .${system};
-          biome = pkgs.runCommand "biome-2.3.11" { } ''
+          toolchainManifest =
+            pkgs.runCommand "mindclade-gitops-toolchain-manifest-v2"
+              {
+                nativeBuildInputs = [
+                  pkgs.coreutils
+                  pkgs.jq
+                ];
+              }
+              ''
+                set -euo pipefail
+                mkdir -p "$out/share/mindclade"
+                record() {
+                  local path="$1" store_path="$2" version="$3"
+                  local sha256
+                  sha256="$(sha256sum "$path" | cut -d' ' -f1)"
+                  jq -cn \
+                    --arg path "$path" \
+                    --arg sha256 "sha256:$sha256" \
+                    --arg store_path "$store_path" \
+                    --arg version "$version" \
+                    '{path:$path,sha256:$sha256,store_path:$store_path,version:$version}'
+                }
+                bazel_json="$(record ${pkgs.bazel_9}/bin/bazel ${pkgs.bazel_9} ${pkgs.bazel_9.version})"
+                cc_json="$(record ${pkgs.stdenv.cc}/bin/cc ${pkgs.stdenv.cc} ${pkgs.stdenv.cc.version})"
+                cxx_json="$(record ${pkgs.stdenv.cc}/bin/c++ ${pkgs.stdenv.cc} ${pkgs.stdenv.cc.version})"
+                go_json="$(record ${pkgs.go_1_26}/bin/go ${pkgs.go_1_26} ${pkgs.go_1_26.version})"
+                java_json="$(record ${pkgs.jdk21_headless}/bin/java ${pkgs.jdk21_headless} ${pkgs.jdk21_headless.version})"
+                python_json="$(record ${pkgs.python312}/bin/python3 ${pkgs.python312} ${pkgs.python312.version})"
+                unsigned="$TMPDIR/unsigned.json"
+                jq -Scn \
+                  --arg repository mindclade/gitops \
+                  --arg system ${system} \
+                  --arg revision ${nixpkgs.rev} \
+                  --arg nar_hash ${nixpkgs.narHash} \
+                  --arg policy_digest ${policy.generated.policy_digest} \
+                  --arg policy_revision ${policy.generated.authority_revision} \
+                  --arg flake "sha256:${builtins.hashFile "sha256" "${self}/flake.lock"}" \
+                  --arg module "sha256:${builtins.hashFile "sha256" "${self}/MODULE.bazel.lock"}" \
+                  --argjson bazel "$bazel_json" \
+                  --argjson cc "$cc_json" \
+                  --argjson cxx "$cxx_json" \
+                  --argjson go "$go_json" \
+                  --argjson java "$java_json" \
+                  --argjson python "$python_json" \
+                  '{schema_version:"mindclade-toolchain.v2",repository:$repository,system:$system,nixpkgs:{revision:$revision,nar_hash:$nar_hash},policy:{digest:$policy_digest,revision:$policy_revision},locks:{flake:$flake,module:$module},executables:{bazel:$bazel,cc:$cc,cxx:$cxx,go:$go,java:$java,python:$python}}' \
+                  > "$unsigned"
+                digest="sha256:$(jq -jSc . "$unsigned" | sha256sum | cut -d' ' -f1)"
+                jq -Sc --arg digest "$digest" '. + {toolchain_digest:$digest}' "$unsigned" \
+                  > "$out/share/mindclade/toolchain-manifest.json"
+              '';
+          biomeTarget = policy.spec.tools.biome.targets.${system};
+          biomeVersion = policy.spec.tools.biome.version;
+          biome = pkgs.runCommand "biome-${biomeVersion}" { } ''
             install -D -m 0755 ${
               pkgs.fetchurl {
-                url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%402.3.11/${biomeTarget.asset}";
+                url = "https://github.com/biomejs/biome/releases/download/%40biomejs/biome%40${biomeVersion}/${biomeTarget.asset}";
                 inherit (biomeTarget) hash;
               }
             } "$out/bin/biome"
@@ -217,7 +228,7 @@
                         printf 'opa=%s\n' "${pkgs.open-policy-agent.version}"
                         printf 'python=%s\n' "${pkgs.python312.version}"
                       } > "$out/versions.txt"
-                      jq -e '.schema_version == "mindclade-toolchain.v1" and .bazel.version == "9.1.1"' \
+                      jq -e '.schema_version == "mindclade-toolchain.v2" and .executables.bazel.version == "9.1.1" and (.toolchain_digest | test("^sha256:[0-9a-f]{64}$"))' \
                         ${toolchain}/share/mindclade/toolchain-manifest.json >/dev/null
               '';
           sourceCheck =
@@ -285,6 +296,11 @@
             LANG = locale;
             LC_ALL = locale;
             TZ = "UTC";
+            shellHook = ''
+              export PATH="${current.toolchain}/bin:$PATH"
+              export GOROOT="${current.pkgs.go_1_26}/share/go"
+              export MINDCLADE_TOOLCHAIN_MANIFEST="${current.toolchainManifest}/share/mindclade/toolchain-manifest.json"
+            '';
           };
         in
         {

@@ -52,10 +52,10 @@ var environmentSchemas = map[string]string{
 	"secret-references.yaml":      "secret_references.schema.json",
 }
 
-// JIT-09 must ratify the authoritative external evidence verifier before the
-// first promoted release. Active desired state remains impossible until that
-// gate is replaced by a qualified implementation.
-const connectedEvidenceVerifierGate = "blocked-pending-jit-09"
+// The JIT-09 verifier is source-ready, but active desired state remains
+// impossible until connected identity, storage, KMS, and tamper qualification
+// evidence has been independently reviewed.
+const connectedEvidenceVerifierGate = "source-ready-unqualified-jit09-v1"
 
 // JIT-05 must ratify the deployment-package, policy-controller, and
 // secret-materialization boundaries before the Wave 5 infrastructure merge.
@@ -169,6 +169,7 @@ func addPaths(target map[string]bool, prefix string, names ...string) {
 func ExpectedSourceFiles() map[string]bool {
 	expected := map[string]bool{}
 	addPaths(expected, "", ".bazelignore", ".bazelrc", ".bazelversion", ".editorconfig", ".gitignore", ".golangci.yml", ".markdownlint-cli2.yaml", ".pre-commit-config.yaml", ".yamllint.yaml", "BUILD.bazel", "CONTRIBUTING.md", "LICENSE", "MODULE.bazel", "MODULE.bazel.lock", "README.md", "SECURITY.md", "biome.json", "component.yaml", "flake.lock", "flake.nix", "justfile", "pyproject.toml")
+	addPaths(expected, "generated", "bazelrc.common", "nix-bazel-policy.lock.json", "nix-bazel-policy.nix", "toolchain-manifest.defaults.json")
 	addPaths(expected, ".vscode", "extensions.json", "settings.json")
 	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "dependabot.yml", "pull_request_template.md")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
@@ -200,6 +201,7 @@ func ExpectedSourceFiles() map[string]bool {
 	addPaths(expected, "tooling/internal/promotion", "promotion.go")
 	addPaths(expected, "tooling/internal/rollback", "rollback.go")
 	addPaths(expected, "tooling/internal/evidence", "receipt.go")
+	addPaths(expected, "tooling/internal/evidence", "supply_chain.go", "supply_chain_test.go")
 	addPaths(expected, "runbooks", "argocd-unavailable.md", "failed-synchronization.md", "deployment-drift.md", "compromised-release.md", "emergency-rollback.md", "cluster-rebootstrap.md")
 	return expected
 }
@@ -215,6 +217,9 @@ func actualSourceFiles(root string) (map[string]bool, error) {
 			return filepath.SkipDir
 		}
 		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Dir(path) == filepath.Clean(root) && name == ".git" {
 			return nil
 		}
 		if filepath.Dir(path) == filepath.Clean(root) && (strings.HasPrefix(name, "bazel-") || name == "result") {
@@ -475,8 +480,8 @@ func ValidateRepositoryWithOptions(root string, options ValidationOptions) error
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
 	}
-	if len(expected) != 142 {
-		return fmt.Errorf("internal source manifest has %d files, expected 142", len(expected))
+	if len(expected) != 148 {
+		return fmt.Errorf("internal source manifest has %d files, expected 148", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
@@ -1163,7 +1168,7 @@ func validateDeferredModuleActivation(root string) error {
 }
 
 func validateConnectedEvidenceActivation(root string) error {
-	if connectedEvidenceVerifierGate != "blocked-pending-jit-09" {
+	if connectedEvidenceVerifierGate != "source-ready-unqualified-jit09-v1" {
 		return fmt.Errorf("unknown connected evidence verifier activation gate %q", connectedEvidenceVerifierGate)
 	}
 	for _, environment := range release.Environments {
@@ -1172,7 +1177,7 @@ func validateConnectedEvidenceActivation(root string) error {
 			return err
 		}
 		if active, _ := document["active"].(bool); active {
-			return fmt.Errorf("%s activation is blocked: external signature and attestation verification is pending JIT-09 ratification and qualification", environment)
+			return fmt.Errorf("%s activation is blocked: the JIT-09 verifier lacks connected identity, storage, KMS, and tamper qualification", environment)
 		}
 	}
 	return nil
@@ -3270,7 +3275,7 @@ func validateFailClosedSources(root string) error {
 			return readErr
 		}
 		text := string(content)
-		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "refs/heads/main", `EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09`, `!= qualified-v1`, "verify-transition --root ..", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", `[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]`, `if [[ "$RELEASE_CLASS" = platform ]]`, `[[ "$ARTIFACT_REFERENCE" != oci://* ]]`} {
+		for _, invariant := range []string{"CONNECTED_GOVERNANCE_READY", "PROMOTION_GOVERNANCE_EVIDENCE", "PROMOTION_TRUSTED_SIGNER", "PROMOTION_TRUSTED_ISSUER", "PROMOTION_TRUSTED_BUILDER", "PROMOTION_TRUSTED_KMS_KEY_VERSION", "PROMOTION_EVIDENCE_BASE_URL", "PROMOTION_EVIDENCE_AUDIENCE", "PROMOTION_EVIDENCE_PUBLIC_KEY_B64", "PROMOTION_VULNERABILITY_POLICY_DIGEST", "PROMOTION_JIT09_QUALIFICATION", "refs/heads/main", `!= qualified-v1`, "verify-transition --root ..", "verify-evidence", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "id-token: write", "--expected-envelope-digest", "--expected-artifact-reference", "--expected-builder-id", "--expected-key-version", "--expected-vulnerability-policy-digest", "ARTIFACT_SOURCE_REVISION", "AUTOMATION_REVISION", `[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$GOVERNANCE_EVIDENCE" =~ ^sha256:[0-9a-f]{64}$ ]]`, `[[ "$ARTIFACT_REFERENCE" =~ ^(oci://)?[a-z0-9]+([.-][a-z0-9]+)*(:[1-9][0-9]{0,4})?/[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}$ ]]`, `if [[ "$RELEASE_CLASS" = platform ]]`, `[[ "$ARTIFACT_REFERENCE" != oci://* ]]`} {
 			if !strings.Contains(text, invariant) {
 				return fmt.Errorf("%s lacks connected-governance preflight %q", workflow, invariant)
 			}
@@ -3329,7 +3334,7 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	for _, invariant := range []string{"aarch64-darwin", "x86_64-linux", "toolchain", "devShells", "default", "ci", "formatter", "checks", "toolchainCheck", "vendorHash", "83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c", "bazel_9", "toolchainManifest"} {
+	for _, invariant := range []string{"policy = import ./generated/nix-bazel-policy.nix", "systems = policy.spec.systems", "toolchain", "devShells", "default", "ci", "formatter", "checks", "toolchainCheck", "vendorHash", "83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c", "bazel_9", "toolchainManifest", "mindclade-toolchain.v2"} {
 		if !strings.Contains(string(flake), invariant) {
 			return fmt.Errorf("flake.nix lacks toolchain contract %q", invariant)
 		}
