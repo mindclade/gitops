@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
     open-pull-requests-limit: 5
     labels: [dependencies, github-actions]
     reviewers:
@@ -13,6 +16,9 @@ updates:
     directory: /tooling
     schedule:
       interval: weekly
+    groups:
+      tooling-runtime:
+        patterns: ["*"]
     open-pull-requests-limit: 5
     labels: [dependencies, go]
     reviewers:
@@ -22,6 +28,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      bazel-modules:
+        patterns: ["*"]
     open-pull-requests-limit: 5
     labels: [dependencies, bazel]
     reviewers:
