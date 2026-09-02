@@ -182,7 +182,7 @@ func ExpectedSourceFiles() map[string]bool {
 	for _, environment := range release.Environments {
 		addPaths(expected, "environments/"+environment, append(environmentDocuments, "kustomization.yaml")...)
 	}
-	addPaths(expected, "schemas/v1", "cluster_set.schema.json", "infrastructure_exports.schema.json", "platform_releases.schema.json", "workload_releases.schema.json", "policy_bindings.schema.json", "secret_references.schema.json", "promotion_receipt.schema.json")
+	addPaths(expected, "schemas/v1", "cluster_set.schema.json", "infrastructure_exports.schema.json", "platform_releases.schema.json", "workload_releases.schema.json", "policy_bindings.schema.json", "secret_references.schema.json", "promotion_receipt.schema.json", "gitops_promotion_envelope.schema.json")
 	policies := []string{"signed_release", "immutable_digest", "approved_environment", "destination_allowlist", "secret_reference", "rollout_safety"}
 	for _, name := range policies {
 		addPaths(expected, "policy", name+".rego")
@@ -202,6 +202,7 @@ func ExpectedSourceFiles() map[string]bool {
 	addPaths(expected, "tooling/internal/rollback", "rollback.go")
 	addPaths(expected, "tooling/internal/evidence", "receipt.go")
 	addPaths(expected, "tooling/internal/evidence", "supply_chain.go", "supply_chain_test.go")
+	addPaths(expected, "tooling/internal/evidence", "promotion_envelope.go", "promotion_envelope_test.go")
 	addPaths(expected, "runbooks", "argocd-unavailable.md", "failed-synchronization.md", "deployment-drift.md", "compromised-release.md", "emergency-rollback.md", "cluster-rebootstrap.md")
 	return expected
 }

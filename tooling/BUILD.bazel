@@ -9,6 +9,8 @@ filegroup(
         "cmd/promotectl/main.go",
         "go.mod",
         "go.sum",
+        "internal/evidence/promotion_envelope.go",
+        "internal/evidence/promotion_envelope_test.go",
         "internal/evidence/receipt.go",
         "internal/evidence/supply_chain.go",
         "internal/evidence/supply_chain_test.go",
@@ -38,7 +40,10 @@ go_library(
 
 go_test(
     name = "evidence_test",
-    srcs = ["internal/evidence/supply_chain_test.go"],
+    srcs = [
+        "internal/evidence/promotion_envelope_test.go",
+        "internal/evidence/supply_chain_test.go",
+    ],
     embed = [":evidence"],
 )
 
@@ -52,6 +57,7 @@ go_library(
 go_library(
     name = "evidence",
     srcs = [
+        "internal/evidence/promotion_envelope.go",
         "internal/evidence/receipt.go",
         "internal/evidence/supply_chain.go",
     ],

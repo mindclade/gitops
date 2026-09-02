@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindclade.io/schemas/gitops/v1/gitops_promotion_envelope.schema.json",
+  "title": "GitOps promotion envelope",
+  "description": "Binds a Buildkite-produced artifact to its source, evidence, and signature. It records that Buildkite performed the build; it never asserts that GitHub Actions did, and it is not itself a build or deployment authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "builderID",
+    "buildkite",
+    "sourceRevision",
+    "artifactReference",
+    "artifactDigest",
+    "evidenceBundleDigest",
+    "sbom",
+    "provenance",
+    "signature",
+    "issuedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "v1" },
+    "kind": { "const": "GitOpsPromotionEnvelope" },
+    "builderID": {
+      "type": "string",
+      "pattern": "^https://buildkite\\.com/mindclade/[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "The Buildkite pipeline that performed the build. A GitHub Actions builder is never valid here."
+    },
+    "buildkite": { "$ref": "#/$defs/buildkite" },
+    "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "artifactReference": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "artifactDigest": { "$ref": "#/$defs/digest" },
+    "evidenceBundleDigest": { "$ref": "#/$defs/digest" },
+    "sbom": { "$ref": "#/$defs/document" },
+    "provenance": { "$ref": "#/$defs/document" },
+    "signature": { "$ref": "#/$defs/signature" },
+    "issuedAt": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "buildkite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization", "pipeline", "buildNumber", "buildID", "commit"],
+      "properties": {
+        "organization": { "const": "mindclade" },
+        "pipeline": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "buildNumber": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "buildID": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "mediaType"],
+      "properties": {
+        "digest": { "$ref": "#/$defs/digest" },
+        "mediaType": { "type": "string", "minLength": 1, "maxLength": 255 }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyVersion", "signatureBase64"],
+      "properties": {
+        "algorithm": { "const": "ECDSA_P256_SHA256" },
+        "keyVersion": {
+          "type": "string",
+          "pattern": "^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/keyRings/[A-Za-z0-9_-]+/cryptoKeys/[A-Za-z0-9_-]+/cryptoKeyVersions/[1-9][0-9]*$"
+        },
+        "signatureBase64": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

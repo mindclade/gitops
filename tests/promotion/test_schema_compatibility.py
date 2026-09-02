@@ -138,7 +138,20 @@ class SchemaCompatibilityTest(unittest.TestCase):
 
     def test_v1_schemas_are_strict_and_identified(self):
         schemas = sorted((ROOT / "schemas/v1").glob("*.schema.json"))
-        self.assertEqual(len(schemas), 7)
+        # Every schema on disk must be registered with the Go source validator and
+        # vice versa. A count cannot tell an added schema from a renamed one, and
+        # would pass for a schema that exists but is never validated.
+        policy = (ROOT / "tooling/internal/policy/policy.go").read_text(encoding="utf-8")
+        declaration = next(
+            line for line in policy.splitlines() if 'addPaths(expected, "schemas/v1"' in line
+        )
+        registered = set(re.findall(r'"([^"]+\.schema\.json)"', declaration))
+        self.assertEqual(
+            {path.name for path in schemas},
+            registered,
+            "schemas/v1 and the source validator's registered schema set disagree",
+        )
+        self.assertTrue(schemas)
         identifiers = set()
         for path in schemas:
             schema = json.loads(path.read_text())
