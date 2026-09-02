@@ -219,6 +219,22 @@ linked to that Git commit and the subject digests. Until the live observer and
 receipt signer are connected and qualified, no command or workflow in this
 repository may label a pre-merge payload as completion evidence.
 
+`GitOpsPromotionEnvelope/v1`
+(`schemas/v1/gitops_promotion_envelope.schema.json`, validated by
+`tooling/internal/evidence/promotion_envelope.go`) binds a released artifact to
+the Buildkite build that produced it: the build number and identifier, the
+source revision, the OCI digest, the evidence-bundle digest, and the SBOM,
+provenance and signature bound by digest and media type.
+
+The envelope is a verification record, not an authority. Validating one proves a
+named Buildkite build produced a named artifact from a named revision. It never
+rebuilds, never deploys, and never asserts that GitHub Actions performed the
+build. Releases are produced on Buildkite, so a builder identity naming
+`github.com`, `githubusercontent.com`, or `actions/runner` is rejected outright,
+and the builder must name the same pipeline the Buildkite identity records. The
+source binding is the point of the envelope, so the Buildkite commit must equal
+the source revision even when both are well formed.
+
 ## Tracked implementation blockers
 
 - [#1](https://github.com/mindclade/gitops/issues/1): connected qualification
