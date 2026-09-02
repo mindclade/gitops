@@ -322,11 +322,11 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertEqual(lock["authority"]["repository"], "mindclade/.github")
         self.assertEqual(
             lock["authority"]["revision"],
-            "b4d28faa5fde98087f60262110a43f25f6da9eb8",
+            "49a015c2c0cdd6a75a5756eb8c1e95b49d117917",
         )
         self.assertEqual(
             lock["contract_digest"],
-            "sha256:17cea0e202665f3253d3693672409bcfeafcbf8a81572b3934036bc3bd5cc918",
+            "sha256:f50150993359d7888ce9a6cffaa71e9f6132abb10f76ebbc826de51835dbcdb9",
         )
         for relative in (
             "generated/bazelrc.common",
