@@ -76,6 +76,9 @@ jobs:
     needs: governance-preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         shell: nix develop --no-accept-flake-config --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
@@ -93,8 +96,14 @@ jobs:
       ATTESTATION_DIGEST: ${{ inputs.attestation_digest }}
       TRUSTED_SIGNER: ${{ vars.PROMOTION_TRUSTED_SIGNER }}
       TRUSTED_ISSUER: ${{ vars.PROMOTION_TRUSTED_ISSUER }}
+      TRUSTED_BUILDER: ${{ vars.PROMOTION_TRUSTED_BUILDER }}
+      TRUSTED_KMS_KEY_VERSION: ${{ vars.PROMOTION_TRUSTED_KMS_KEY_VERSION }}
+      EVIDENCE_BASE_URL: ${{ vars.PROMOTION_EVIDENCE_BASE_URL }}
+      EVIDENCE_AUDIENCE: ${{ vars.PROMOTION_EVIDENCE_AUDIENCE }}
+      EVIDENCE_PUBLIC_KEY_B64: ${{ vars.PROMOTION_EVIDENCE_PUBLIC_KEY_B64 }}
+      VULNERABILITY_POLICY_DIGEST: ${{ vars.PROMOTION_VULNERABILITY_POLICY_DIGEST }}
       GOVERNANCE_EVIDENCE: ${{ vars.PROMOTION_GOVERNANCE_EVIDENCE }}
-      EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09
+      EVIDENCE_VERIFIER_GATE: ${{ vars.PROMOTION_JIT09_QUALIFICATION }}
       AUTOMATION_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,10 +145,51 @@ jobs:
             --cluster "$TARGET_CLUSTER" \
             --artifact-digest "$ARTIFACT_DIGEST" \
             --prior-digest "$PRIOR_DIGEST"
-      - name: Enforce JIT-09 implementation and qualification gate
+      - name: Enforce JIT-09 connected qualification gate
         run: |
           set -euo pipefail
           if [[ "$EVIDENCE_VERIFIER_GATE" != qualified-v1 ]]; then
-            echo "promotion is blocked pending JIT-09 ratification, implementation, and qualification" >&2
+            echo "promotion is blocked pending JIT-09 connected qualification" >&2
             exit 1
           fi
+      - name: Verify Buildkite artifact, SBOM, provenance, dependencies, and vulnerability policy
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_BASE_URL" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]+)?$ ]]
+          [[ "$EVIDENCE_AUDIENCE" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]+)?$ ]]
+          [[ "$TRUSTED_KMS_KEY_VERSION" =~ ^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/keyRings/[A-Za-z0-9_-]+/cryptoKeys/[A-Za-z0-9_-]+/cryptoKeyVersions/[1-9][0-9]*$ ]]
+          [[ "$VULNERABILITY_POLICY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test -n "$TRUSTED_BUILDER"
+          evidence_root="${RUNNER_TEMP}/promotion-evidence"
+          install -d -m 0700 "$evidence_root"
+          printf '%s' "$EVIDENCE_PUBLIC_KEY_B64" | base64 --decode > "$evidence_root/public-key.pem"
+          chmod 0600 "$evidence_root/public-key.pem"
+          evidence_id="${ATTESTATION_DIGEST#sha256:}"
+          audience_encoded="$(jq -nr --arg value "$EVIDENCE_AUDIENCE" '$value | @uri')"
+          oidc_response="$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience_encoded}")"
+          oidc_token="$(jq -er '.value' <<< "$oidc_response")"
+          for name in envelope provenance sbom dependencies vulnerability; do
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+              --tlsv1.2 --connect-timeout 10 --max-time 120 --retry 3 --retry-all-errors \
+              --header "Authorization: Bearer ${oidc_token}" \
+              --output "$evidence_root/$name.json" \
+              "${EVIDENCE_BASE_URL%/}/${evidence_id}/$name.json"
+          done
+          cd tooling
+          go run ./cmd/promotectl verify-evidence \
+            --envelope "$evidence_root/envelope.json" \
+            --public-key "$evidence_root/public-key.pem" \
+            --provenance "$evidence_root/provenance.json" \
+            --sbom "$evidence_root/sbom.json" \
+            --dependencies "$evidence_root/dependencies.json" \
+            --vulnerability "$evidence_root/vulnerability.json" \
+            --expected-envelope-digest "$ATTESTATION_DIGEST" \
+            --expected-artifact-reference "$ARTIFACT_REFERENCE" \
+            --expected-artifact-digest "$ARTIFACT_DIGEST" \
+            --expected-source-revision "$ARTIFACT_SOURCE_REVISION" \
+            --expected-builder-id "$TRUSTED_BUILDER" \
+            --expected-signer-identity "$TRUSTED_SIGNER" \
+            --expected-key-version "$TRUSTED_KMS_KEY_VERSION" \
+            --expected-vulnerability-policy-digest "$VULNERABILITY_POLICY_DIGEST"

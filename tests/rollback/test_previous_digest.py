@@ -56,7 +56,9 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn('[[ "$ARTIFACT_REFERENCE" != oci://* ]]', workflow)
         self.assertIn('[[ "$ARTIFACT_REFERENCE" == *@"$PREVIOUS_DIGEST" ]]', workflow)
         self.assertIn("verify-transition --root ..", workflow)
-        self.assertIn("EVIDENCE_VERIFIER_GATE: blocked-pending-jit-09", workflow)
+        self.assertIn("PROMOTION_JIT09_QUALIFICATION", workflow)
+        self.assertIn("go run ./cmd/promotectl verify-evidence", workflow)
+        self.assertIn("ACTIONS_ID_TOKEN_REQUEST_TOKEN", workflow)
         self.assertIn("!= qualified-v1", workflow)
         self.assertIn('[[ "$ARTIFACT_SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]', workflow)
         self.assertIn('[[ "$ATTESTATION_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
@@ -77,9 +79,9 @@ class PreviousDigestTest(unittest.TestCase):
         self.assertIn("name: production-promotion", promotion_workflow)
         self.assertNotIn("name: ${{ inputs.environment }}-promotion", promotion_workflow)
 
-    def test_emergency_runbook_stops_at_jit_09_without_claiming_a_receipt(self):
+    def test_emergency_runbook_requires_qualified_jit_09_without_claiming_a_receipt(self):
         runbook = (ROOT / "runbooks/emergency-rollback.md").read_text()
-        self.assertIn("fail-closed JIT-09 gate", runbook)
+        self.assertIn("fail-closed JIT-09 qualification gate", runbook)
         self.assertIn("does not change desired state", runbook)
         self.assertIn("not a rollback receipt", runbook)
         self.assertNotIn("Review the emitted receipt checksum", runbook)

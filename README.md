@@ -103,6 +103,13 @@ reviewed outside this repository:
 - environment-scoped `PROMOTION_TRUSTED_SIGNER` and
   `PROMOTION_TRUSTED_ISSUER` identities, controlled with the same protected
   environment review rules;
+- protected `PROMOTION_TRUSTED_BUILDER`, `PROMOTION_TRUSTED_KMS_KEY_VERSION`,
+  `PROMOTION_VULNERABILITY_POLICY_DIGEST`, and versioned public-key material;
+- a private HTTPS evidence gateway bound through
+  `PROMOTION_EVIDENCE_BASE_URL` and `PROMOTION_EVIDENCE_AUDIENCE` that accepts
+  only the job's short-lived GitHub OIDC token; and
+- `PROMOTION_JIT09_QUALIFICATION=qualified-v1`, set only after independent
+  forged-signature, wrong-subject, stale-evidence, IAM-denial, and tamper tests;
 - a digest-pinned Argo CD bootstrap, a qualified External Secrets Operator and
   secret store, registered Argo cluster credentials, and explicit AppProject
   destination allowlists; and
@@ -115,12 +122,15 @@ inactive, and the ApplicationSets emit zero Applications.
 The manual promotion and rollback dispatch surfaces accept only `production`
 and bind directly to `production-promotion`, the sole protected promotion
 environment in the current governance catalog. That restriction grants no
-production authority. The initial source carries a `blocked-pending-jit-09`
-evidence-verifier gate. Both protected workflows exit without creating
-completion evidence, and source validation rejects every active environment,
-until a reviewed change adds and qualifies actual cryptographic
-signature/attestation verification. Setting repository or environment
-variables alone cannot bypass this code-level gate.
+production authority. The `source-ready-unqualified-jit09-v1`
+evidence-verifier gate checks a canonical ECDSA P-256 envelope against the
+protected Cloud KMS key version, exact
+artifact/source/Buildkite identities, SLSA v1 provenance, SPDX 2.3 SBOM, all six
+dependency ecosystems, and the vulnerability-policy decision. Both workflows
+still exit without creating completion evidence, and source validation rejects
+every active environment until connected qualification is independently
+reviewed. Setting repository or environment variables alone cannot bypass the
+cryptographic, subject, freshness, document-digest, or desired-state gates.
 
 ## Local validation
 
@@ -140,6 +150,12 @@ The root developer-quality interface is `just format`, `just format-check`,
 `just lint`, and `just check`. Formatting is limited to handwritten source and
 configuration; rendered or downloaded material and evidence remain under their
 owning commands.
+
+Pull requests and merge groups are qualified by the organization-required
+workflow at the immutable `.github` policy revision. Its stable context remains
+`Pull request / required`. The repository-local qualification workflow runs
+only on protected `main` and manual dispatch, so it cannot create a competing
+required-check context or cancel merge-queue qualification.
 
 `flake.lock` is the system-tool supply-chain authority for Linux x86-64 and
 Apple Silicon. The `packages.toolchain`, `devShells.default`, `devShells.ci`,
@@ -190,22 +206,23 @@ preflight and must not be inferred from its result.
 The current production-only promotion and rollback workflows are source gates,
 not operational promotion implementations. They validate immutable input
 grammar and the requested prior/current digest against the exact component,
-cluster, and release class in the checked-out production record, then stop at
-JIT-09. They neither write desired state nor emit a promotion or rollback
-receipt.
+cluster, and release class in the checked-out production record, require the
+connected JIT-09 qualification gate, acquire a short-lived OIDC credential,
+and verify the complete signed Buildkite evidence set. They neither write
+desired state nor emit a promotion or rollback receipt.
 
 The `promotectl receipt` and `promotectl rollback` commands validate the current
 v1 receipt payload contract for source testing only. A blueprint-authoritative
 receipt must instead be produced after a protected desired-state commit merges,
 Argo reconciles it, and observed sync and health succeed; it must be signed and
-linked to that Git commit and the subject digests. Until JIT-09 defines and
-qualifies that signed envelope and the live observer, no command or workflow in
-this repository may label a pre-merge payload as completion evidence.
+linked to that Git commit and the subject digests. Until the live observer and
+receipt signer are connected and qualified, no command or workflow in this
+repository may label a pre-merge payload as completion evidence.
 
 ## Tracked implementation blockers
 
-- [#1](https://github.com/mindclade/gitops/issues/1): authoritative signed
-  ReleaseManifest and evidence verification.
+- [#1](https://github.com/mindclade/gitops/issues/1): connected qualification
+  of the source-ready signed evidence verifier and post-sync receipt observer.
 - [#2](https://github.com/mindclade/gitops/issues/2): component-scoped workload
   package handoff.
 - [#4](https://github.com/mindclade/gitops/issues/4): digest-bound deployable

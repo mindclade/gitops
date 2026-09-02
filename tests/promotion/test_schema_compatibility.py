@@ -1145,7 +1145,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn(
-                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                "the JIT-09 verifier lacks connected identity, storage, KMS, and tamper qualification",
                 result.stderr,
             )
         finally:
@@ -1173,9 +1173,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 self._set_inactive(repository, "development", filename, collection)
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
-            self.assertIn(
-                "external signature and attestation verification is pending JIT-09", result.stderr
-            )
+            self.assertIn("the JIT-09 verifier lacks connected identity", result.stderr)
             self.assertNotIn("payloadDigest", result.stderr)
         finally:
             directory.cleanup()
@@ -1207,7 +1205,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertNotIn(
-                        "external signature and attestation verification is pending JIT-09",
+                        "the JIT-09 verifier lacks connected identity",
                         result.stderr,
                     )
                 finally:
@@ -1363,7 +1361,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                     result = self._validate(repository)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn(expected, result.stderr)
-                    self.assertNotIn("pending JIT-09", result.stderr)
+                    self.assertNotIn("JIT-09 verifier lacks connected", result.stderr)
                 finally:
                     directory.cleanup()
 
@@ -1867,7 +1865,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn(
-                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                "the JIT-09 verifier lacks connected identity, storage, KMS, and tamper qualification",
                 result.stderr,
             )
             self.assertNotIn("active state", result.stderr)
@@ -1898,7 +1896,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
             result = self._validate(repository)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn(
-                "external signature and attestation verification is pending JIT-09 ratification and qualification",
+                "the JIT-09 verifier lacks connected identity, storage, KMS, and tamper qualification",
                 result.stderr,
             )
             self.assertNotIn("active state", result.stderr)

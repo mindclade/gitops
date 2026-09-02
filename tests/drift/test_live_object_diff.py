@@ -1,4 +1,5 @@
 # pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
+import hashlib
 import json
 import os
 import re
@@ -95,7 +96,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             for path in ROOT.rglob("*")
             if path.is_file() and ".git" not in path.parts and ".ruff_cache" not in path.parts
         ]
-        self.assertEqual(len(files), 142)
+        self.assertEqual(len(files), 148)
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):
@@ -240,13 +241,15 @@ class LiveObjectDiffTest(unittest.TestCase):
         for mode in ("enforce", "audit", "warn"):
             self.assertIn(f"pod-security.kubernetes.io/{mode}-version: v1.34", namespace)
 
-    def test_source_validation_covers_main_and_merge_queue(self):
+    def test_source_validation_defers_pr_and_merge_queue_to_required_workflow(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
         justfile = (ROOT / "justfile").read_text()
-        self.assertTrue(workflow.startswith("name: Pull request\n"))
+        self.assertTrue(workflow.startswith("name: Repository qualification\n"))
         self.assertIn("\n  required:\n    name: required\n", workflow)
         self.assertIn("push:\n    branches: [main]", workflow)
-        self.assertIn("merge_group:\n    types: [checks_requested]", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertNotIn("merge_group:", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn(
             "nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just validate",
             workflow,
@@ -298,8 +301,8 @@ class LiveObjectDiffTest(unittest.TestCase):
         flake = (ROOT / "flake.nix").read_text()
         lock = (ROOT / "flake.lock").read_text()
         for invariant in (
-            '"aarch64-darwin"',
-            '"x86_64-linux"',
+            "policy = import ./generated/nix-bazel-policy.nix",
+            "systems = policy.spec.systems",
             "toolchain = pkgs.buildEnv",
             "devShells = forAllSystems",
             "default = current.pkgs.mkShellNoCC common",
@@ -310,6 +313,28 @@ class LiveObjectDiffTest(unittest.TestCase):
             self.assertIn(invariant, flake)
         self.assertIn('"nixpkgs"', lock)
         self.assertIn('"narHash"', lock)
+        generated = (ROOT / "generated/nix-bazel-policy.nix").read_text()
+        for system in ("aarch64-darwin", "aarch64-linux", "x86_64-linux"):
+            self.assertIn(f'"{system}"', generated)
+
+    def test_generated_policy_materialization_is_digest_bound(self):
+        lock = json.loads((ROOT / "generated/nix-bazel-policy.lock.json").read_text())
+        self.assertEqual(lock["authority"]["repository"], "mindclade/.github")
+        self.assertEqual(
+            lock["authority"]["revision"],
+            "b4d28faa5fde98087f60262110a43f25f6da9eb8",
+        )
+        self.assertEqual(
+            lock["contract_digest"],
+            "sha256:17cea0e202665f3253d3693672409bcfeafcbf8a81572b3934036bc3bd5cc918",
+        )
+        for relative in (
+            "generated/bazelrc.common",
+            "generated/nix-bazel-policy.nix",
+            "generated/toolchain-manifest.defaults.json",
+        ):
+            actual = "sha256:" + hashlib.sha256((ROOT / relative).read_bytes()).hexdigest()
+            self.assertEqual(lock["artifacts"][relative], actual)
 
     def test_nix_toolchain_uses_pinned_bazel_release(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
@@ -587,7 +612,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             "policy bindings",
             "secret references",
             "`blocked-pending-jit-05` activation gate",
-            "`blocked-pending-jit-09` evidence-verifier gate",
+            "`source-ready-unqualified-jit09-v1` evidence-verifier gate",
         ):
             self.assertIn(blocker, readme)
         self.assertIn(

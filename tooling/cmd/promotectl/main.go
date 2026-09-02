@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mindclade/gitops/tooling/internal/evidence"
 	"github.com/mindclade/gitops/tooling/internal/policy"
 	"github.com/mindclade/gitops/tooling/internal/promotion"
 	"github.com/mindclade/gitops/tooling/internal/release"
@@ -157,6 +158,43 @@ func transitionCommand(arguments []string) error {
 	)
 }
 
+func verifyEvidenceCommand(arguments []string) error {
+	flags := flag.NewFlagSet("verify-evidence", flag.ContinueOnError)
+	envelope := flags.String("envelope", "", "canonical signed evidence envelope")
+	publicKey := flags.String("public-key", "", "trusted ECDSA P-256 public key PEM")
+	provenance := flags.String("provenance", "", "SLSA v1 provenance statement")
+	sbom := flags.String("sbom", "", "SPDX 2.3 SBOM")
+	dependencies := flags.String("dependencies", "", "six-ecosystem dependency snapshot")
+	vulnerability := flags.String("vulnerability", "", "vulnerability-policy decision")
+	envelopeDigest := flags.String("expected-envelope-digest", "", "expected immutable envelope digest")
+	artifactReference := flags.String("expected-artifact-reference", "", "expected immutable artifact reference")
+	artifactDigest := flags.String("expected-artifact-digest", "", "expected artifact digest")
+	sourceRevision := flags.String("expected-source-revision", "", "expected source revision")
+	builderID := flags.String("expected-builder-id", "", "protected Buildkite builder identity")
+	signerIdentity := flags.String("expected-signer-identity", "", "protected signer workload identity")
+	keyVersion := flags.String("expected-key-version", "", "protected Cloud KMS key version")
+	vulnerabilityPolicy := flags.String("expected-vulnerability-policy-digest", "", "protected vulnerability policy digest")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	return evidence.VerifySupplyChain(evidence.SupplyChainVerificationRequest{
+		EnvelopePath:                      *envelope,
+		PublicKeyPath:                     *publicKey,
+		ProvenancePath:                    *provenance,
+		SBOMPath:                          *sbom,
+		DependenciesPath:                  *dependencies,
+		VulnerabilityPath:                 *vulnerability,
+		ExpectedEnvelopeDigest:            *envelopeDigest,
+		ExpectedArtifactReference:         *artifactReference,
+		ExpectedArtifactDigest:            *artifactDigest,
+		ExpectedSourceRevision:            *sourceRevision,
+		ExpectedBuilderID:                 *builderID,
+		ExpectedSignerIdentity:            *signerIdentity,
+		ExpectedKeyVersion:                *keyVersion,
+		ExpectedVulnerabilityPolicyDigest: *vulnerabilityPolicy,
+	})
+}
+
 func bootstrapProvenance(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -200,7 +238,7 @@ func verifyBootstrap(root string, fetch bool) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fail(errors.New("expected validate, validate-bootstrap, render, receipt, rollback, verify-bootstrap, verify-transition, or version"))
+		fail(errors.New("expected validate, validate-bootstrap, render, receipt, rollback, verify-bootstrap, verify-evidence, verify-transition, or version"))
 	}
 	switch os.Args[1] {
 	case "validate":
@@ -258,6 +296,11 @@ func main() {
 			fail(err)
 		}
 		fmt.Println("checked-out release transition passed")
+	case "verify-evidence":
+		if err := verifyEvidenceCommand(os.Args[2:]); err != nil {
+			fail(err)
+		}
+		fmt.Println("signed supply-chain evidence passed")
 	case "verify-bootstrap":
 		flags := flag.NewFlagSet("verify-bootstrap", flag.ExitOnError)
 		root := flags.String("root", ".", "repository root")
