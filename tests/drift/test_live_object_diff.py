@@ -142,8 +142,7 @@ class LiveObjectDiffTest(unittest.TestCase):
         on_disk = {
             str(path.relative_to(ROOT))
             for path in ROOT.rglob("*")
-            if path.is_file()
-            and not {".git", ".ruff_cache", "__pycache__"} & set(path.parts)
+            if path.is_file() and not {".git", ".ruff_cache", "__pycache__"} & set(path.parts)
         }
         self.assertEqual(
             on_disk,
@@ -397,7 +396,10 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIn("nix build --no-accept-flake-config", workflow)
         self.assertIn("BAZEL_LINKOPTS", flake)
         self.assertIn("MACOSX_DEPLOYMENT_TARGET", justfile)
-        self.assertIn('bazel test --config=ci "${bazel_args[@]}" //...', justfile)
+        # The expansion is guarded because the recipe runs under bash -u, where
+        # bash 3.2 treats an unguarded "${bazel_args[@]}" on an empty array as an
+        # unbound variable and aborts before any test runs.
+        self.assertIn('bazel test --config=ci ${bazel_args[@]+"${bazel_args[@]}"} //...', justfile)
         self.assertIn("83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c", flake)
         self.assertIn("bazel_9", flake)
         self.assertEqual((ROOT / ".bazelversion").read_text().strip(), "9.1.1")
@@ -568,17 +570,13 @@ class LiveObjectDiffTest(unittest.TestCase):
 
     def test_renovate_covers_declared_dependency_ecosystems(self):
         document = json.loads((ROOT / ".github/renovate.json").read_text())
-        self.assertEqual(
-            document["$schema"], "https://docs.renovatebot.com/renovate-schema.json"
-        )
+        self.assertEqual(document["$schema"], "https://docs.renovatebot.com/renovate-schema.json")
         self.assertEqual(document["extends"], ["github>mindclade/.github"])
         self.assertEqual(
             sorted(document["enabledManagers"]),
             ["bazel-module", "github-actions", "gomod", "nix", "pre-commit"],
         )
-        self.assertEqual(
-            sorted(document), ["$schema", "enabledManagers", "extends"]
-        )
+        self.assertEqual(sorted(document), ["$schema", "enabledManagers", "extends"])
         module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
         for required in (
             'go_mod_from_file = "//tooling:go.mod"',

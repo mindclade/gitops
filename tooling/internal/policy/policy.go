@@ -3343,7 +3343,10 @@ func validateFailClosedSources(root string) error {
 	for _, invariant := range []string{
 		"MACOSX_DEPLOYMENT_TARGET",
 		"bazel test --config=ci",
-		`"${bazel_args[@]}" //...`,
+		// Guarded expansion: the recipe runs under bash -u, where bash 3.2 treats
+		// an unguarded "${bazel_args[@]}" on an empty array as an unbound variable
+		// and aborts before any test runs.
+		`${bazel_args[@]+"${bazel_args[@]}"} //...`,
 	} {
 		if !strings.Contains(string(justfile), invariant) {
 			return errors.New("just bazel-test does not use the locked Nix-provided Bazel CI configuration")
