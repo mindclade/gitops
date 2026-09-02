@@ -90,13 +90,66 @@ class LiveObjectDiffTest(unittest.TestCase):
             requirements["body"],
         )
 
-    def test_exact_blueprint_file_count(self):
-        files = [
-            path
+    def test_bazel_source_closure_matches_the_repository_tree(self):
+        """Every file on disk must be declared to Bazel, and vice versa.
+
+        The Go validator (promotectl validate) is the authority on the expected
+        source list and reports drift by name. This test covers the complementary
+        gap it cannot see: a file added to that list but never declared in the
+        Bazel filegroups, or a stray file on disk declared nowhere. Neither check
+        uses a file count, so adding a file means declaring it rather than
+        editing a magic number.
+        """
+        if "TEST_SRCDIR" in os.environ:
+            self.skipTest("under Bazel the tree is reconstructed from the closure itself")
+
+        def filegroup_body(build_file):
+            """Return the full srcs expression, including any ``+ glob([...])``."""
+            text = (ROOT / build_file).read_text()
+            marker = text.index('name = "repository_source"')
+            start = text.index("srcs =", marker) + len("srcs =")
+            depth, index = 0, start
+            while index < len(text):
+                character = text[index]
+                if character in "[(":
+                    depth += 1
+                elif character in "])":
+                    depth -= 1
+                    if depth < 0:
+                        break
+                elif character == "," and depth == 0:
+                    break
+                index += 1
+            return text[start:index]
+
+        def declared(build_file, prefix=""):
+            body = filegroup_body(build_file)
+            literals, globs = body.split("glob(", 1) if "glob(" in body else (body, "")
+            paths = set()
+            for entry in re.findall(r'"([^"]+)"', literals):
+                if entry.startswith("//tooling:"):
+                    paths |= declared("tooling/BUILD.bazel", "tooling/")
+                else:
+                    paths.add(prefix + entry)
+            for pattern in re.findall(r'"([^"]+)"', globs):
+                paths |= {
+                    str(match.relative_to(ROOT))
+                    for match in ROOT.glob(prefix + pattern)
+                    if match.is_file()
+                }
+            return paths
+
+        on_disk = {
+            str(path.relative_to(ROOT))
             for path in ROOT.rglob("*")
-            if path.is_file() and ".git" not in path.parts and ".ruff_cache" not in path.parts
-        ]
-        self.assertEqual(len(files), 148)
+            if path.is_file()
+            and not {".git", ".ruff_cache", "__pycache__"} & set(path.parts)
+        }
+        self.assertEqual(
+            on_disk,
+            declared("BUILD.bazel"),
+            "Bazel source closure and repository tree disagree",
+        )
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):
@@ -513,35 +566,18 @@ class LiveObjectDiffTest(unittest.TestCase):
             "file-specific runbook ownership must override the directory rule",
         )
 
-    def test_dependabot_covers_declared_dependency_ecosystems(self):
-        text = (ROOT / ".github/dependabot.yml").read_text()
-        self.assertRegex(text, r"(?m)^version: 2$")
-        matches = list(re.finditer(r"(?m)^  - package-ecosystem: ([a-z-]+)$", text))
-        configured = {}
-        for index, match in enumerate(matches):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            block = text[match.end() : end]
-            directory = re.search(r"(?m)^    directory: (\S+)$", block)
-            interval = re.search(r"(?m)^      interval: (\S+)$", block)
-            limit = re.search(
-                r"(?m)^    open-pull-requests-limit: ([1-9][0-9]*)$",
-                block,
-            )
-            reviewers = set(re.findall(r"(?m)^      - (mindclade/[a-z-]+)$", block))
-            self.assertIsNotNone(directory, match.group(1))
-            self.assertIsNotNone(interval, match.group(1))
-            self.assertIsNotNone(limit, match.group(1))
-            self.assertEqual(interval.group(1), "weekly")
-            self.assertEqual(
-                reviewers,
-                {"mindclade/platform-operations", "mindclade/security"},
-            )
-            self.assertNotIn(match.group(1), configured)
-            configured[match.group(1)] = directory.group(1)
-
+    def test_renovate_covers_declared_dependency_ecosystems(self):
+        document = json.loads((ROOT / ".github/renovate.json").read_text())
         self.assertEqual(
-            configured,
-            {"github-actions": "/", "gomod": "/tooling", "bazel": "/"},
+            document["$schema"], "https://docs.renovatebot.com/renovate-schema.json"
+        )
+        self.assertEqual(document["extends"], ["github>mindclade/.github"])
+        self.assertEqual(
+            sorted(document["enabledManagers"]),
+            ["bazel-module", "github-actions", "gomod", "nix", "pre-commit"],
+        )
+        self.assertEqual(
+            sorted(document), ["$schema", "enabledManagers", "extends"]
         )
         module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
         for required in (

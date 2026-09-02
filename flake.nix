@@ -163,6 +163,7 @@
               kustomize
               nixfmt
               open-policy-agent
+              osv-scanner
               pre-commit
 
               pyright
@@ -175,6 +176,7 @@
               stdenv.cc
               toolchainManifest
               yq-go
+              zizmor
             ]
             ++ lib.optionals stdenv.hostPlatform.isDarwin [ darwin.libresolv ];
           promotectl = pkgs.buildGoModule {
@@ -208,7 +210,9 @@
                 test "$(pyright --version)" = "pyright 1.1.412"
                 test "$(ruff --version)" = "ruff 0.16.4"
                 test "$(shfmt --version)" = "3.13.1"
-                    command -v act actionlint bazel cc conftest go gofmt jq just kubeconform kustomize nixfmt opa python3 shellcheck yq >/dev/null
+                test "$(zizmor --version)" = "zizmor 1.29.0"
+                test "$(osv-scanner --version | awk '/^osv-scanner version:/ {print $3}')" = "2.5.0"
+                    command -v act actionlint bazel cc conftest go gofmt jq just kubeconform kustomize nixfmt opa osv-scanner python3 shellcheck yq zizmor >/dev/null
                       test "$(bazel --version)" = "bazel 9.1.1"
                       go version | grep -E '^go version go1\.26\.' >/dev/null
                       python3 --version | grep -E '^Python 3\.12\.' >/dev/null
@@ -226,7 +230,9 @@
                         printf 'kustomize=%s\n' "${pkgs.kustomize.version}"
                         printf 'nixfmt=%s\n' "${pkgs.nixfmt.version}"
                         printf 'opa=%s\n' "${pkgs.open-policy-agent.version}"
+                        printf 'osv-scanner=%s\n' "${pkgs.osv-scanner.version}"
                         printf 'python=%s\n' "${pkgs.python312.version}"
+                        printf 'zizmor=%s\n' "${pkgs.zizmor.version}"
                       } > "$out/versions.txt"
                       jq -e '.schema_version == "mindclade-toolchain.v2" and .executables.bazel.version == "9.1.1" and (.toolchain_digest | test("^sha256:[0-9a-f]{64}$"))' \
                         ${toolchain}/share/mindclade/toolchain-manifest.json >/dev/null

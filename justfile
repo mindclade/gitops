@@ -37,6 +37,7 @@ lint:
     pyright
     cd tooling && golangci-lint run --config ../.golangci.yml ./...
     actionlint .github/workflows/*.yml
+    zizmor --no-progress --offline .github/workflows/*.yml
     yamllint --config-file .yamllint.yaml .
     markdownlint-cli2
 
@@ -80,6 +81,7 @@ bootstrap-check:
 
 lint-ci:
     actionlint .github/workflows/*.yml
+    zizmor --no-progress --offline .github/workflows/*.yml
 
 validate-source:
     cd tooling && go run ./cmd/promotectl validate --root ..
@@ -89,7 +91,12 @@ flake-check:
 
 test: go-test python-test policy-test bootstrap-check bazel-test
 
-check: format-check lint validate-source test flake-check
+# Vulnerability scan of declared dependencies. Requires network access to the
+# OSV database, so it is deliberately separate from the hermetic lint recipe.
+security:
+    osv-scanner scan source --recursive .
+
+check: format-check lint validate-source test security flake-check
 
 validate: check
 

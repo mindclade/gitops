@@ -171,7 +171,7 @@ func ExpectedSourceFiles() map[string]bool {
 	addPaths(expected, "", ".bazelignore", ".bazelrc", ".bazelversion", ".editorconfig", ".gitignore", ".golangci.yml", ".markdownlint-cli2.yaml", ".pre-commit-config.yaml", ".yamllint.yaml", "BUILD.bazel", "CONTRIBUTING.md", "LICENSE", "MODULE.bazel", "MODULE.bazel.lock", "README.md", "SECURITY.md", "biome.json", "component.yaml", "flake.lock", "flake.nix", "justfile", "pyproject.toml")
 	addPaths(expected, "generated", "bazelrc.common", "nix-bazel-policy.lock.json", "nix-bazel-policy.nix", "toolchain-manifest.defaults.json")
 	addPaths(expected, ".vscode", "extensions.json", "settings.json")
-	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "dependabot.yml", "pull_request_template.md")
+	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "pull_request_template.md", "renovate.json")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
 	addPaths(expected, "controllers/argocd", "namespace.yaml", "repository-credentials-reference.yaml", "notifications.yaml", "resource-customizations.yaml", "kustomization.yaml")
 	addPaths(expected, "controllers/applicationsets", "platform-components.yaml", "control-plane-services.yaml", "execution-workers.yaml", "environment-root.yaml")
@@ -479,9 +479,6 @@ func ValidateRepositoryWithOptions(root string, options ValidationOptions) error
 	sort.Strings(extra)
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
-	}
-	if len(expected) != 148 {
-		return fmt.Errorf("internal source manifest has %d files, expected 148", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
