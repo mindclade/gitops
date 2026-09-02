@@ -16,14 +16,18 @@ concurrency:
   group: gitops-pr-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  USE_BAZEL_VERSION: "9.2.0"
-
 jobs:
   required:
     name: required
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+        accept-flake-config = false
+        substituters = https://cache.nixos.org/
+        trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+        require-sigs = true
     steps:
       - name: Check out reviewed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,27 +49,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          toolchain="$(nix build --no-link --no-update-lock-file --print-out-paths .#toolchain)"
-          test -x "$toolchain/bin/bazelisk"
+          nix config show --json | jq -e '
+            def config_value:
+              if type == "object" and has("value") then .value else . end;
+            (.substituters | config_value) == ["https://cache.nixos.org/"] and
+            (."trusted-public-keys" | config_value) ==
+              ["cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="] and
+            (."require-sigs" | config_value) == true and
+            (."accept-flake-config" | config_value) == false
+          ' >/dev/null
+          toolchain="$(nix build --no-accept-flake-config --no-link --no-update-lock-file --print-out-paths .#toolchain)"
+          test -x "$toolchain/bin/bazel"
           printf '%s/bin\n' "$toolchain" >> "$GITHUB_PATH"
-      - name: Configure approved Bazel environment
-        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # v0.19.0
-        with:
-          bazelisk-cache: false
-          cache-save: false
-          disk-cache: false
-          repository-cache: false
-          token: ""
       - name: Verify locked flake outputs
         shell: bash
-        run: nix flake check --no-update-lock-file
-      - name: Validate exact source tree
+        run: nix flake check --no-accept-flake-config --no-update-lock-file
+      - name: Validate governed build inputs
         shell: bash
-        run: test "$(git ls-files | wc -l | tr -d ' ')" = 129
+        run: git ls-files --error-unmatch .bazelignore .bazelrc .bazelversion flake.nix flake.lock MODULE.bazel MODULE.bazel.lock
       - name: Validate source, schemas, renders, and policies
-        run: nix develop --no-update-lock-file .#ci --command just validate
-      - name: Verify Bazel graph with the Nix-provided Bazelisk
-        run: nix develop --no-update-lock-file .#ci --command just bazel-test
+        run: nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just validate
+      - name: Verify Bazel graph with Nix-provided Bazel
+        run: nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just bazel-test
       - name: Reject generated source drift
         shell: bash
         run: test -z "$(git status --porcelain)"

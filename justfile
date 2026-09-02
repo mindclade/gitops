@@ -4,12 +4,12 @@ default:
     @just --list
 
 toolchain:
-    nix build --no-link --no-update-lock-file .#toolchain
+    nix build --no-accept-flake-config --no-link --no-update-lock-file .#toolchain
 
 nix-validate:
-    nix flake check --no-update-lock-file
-    nix develop --no-update-lock-file .#ci --command just check
-    nix develop --no-update-lock-file .#ci --command just bazel-test
+    nix flake check --no-accept-flake-config --no-update-lock-file
+    nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just check
+    nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just bazel-test
 
 format:
     biome check --write .
@@ -85,7 +85,7 @@ validate-source:
     cd tooling && go run ./cmd/promotectl validate --root ..
 
 flake-check:
-    nix flake check --no-build --no-update-lock-file
+    nix flake check --no-accept-flake-config --no-build --no-update-lock-file
 
 test: go-test python-test policy-test bootstrap-check bazel-test
 
@@ -102,4 +102,4 @@ verify-bootstrap:
     cd tooling && go run ./cmd/promotectl verify-bootstrap --root .. --fetch
 
 bazel-test:
-    bazel test --config=ci //...
+    @bazel_args=(); if test -n "${MACOSX_DEPLOYMENT_TARGET:-}"; then bazel_args+=("--repo_env=MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}" "--action_env=MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}" "--copt=-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}" "--linkopt=-mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"); fi; bazel test --config=ci "${bazel_args[@]}" //...

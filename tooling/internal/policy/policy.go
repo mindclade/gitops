@@ -168,7 +168,7 @@ func addPaths(target map[string]bool, prefix string, names ...string) {
 
 func ExpectedSourceFiles() map[string]bool {
 	expected := map[string]bool{}
-	addPaths(expected, "", ".editorconfig", ".gitignore", ".golangci.yml", ".markdownlint-cli2.yaml", ".pre-commit-config.yaml", ".yamllint.yaml", "BUILD.bazel", "CONTRIBUTING.md", "LICENSE", "MODULE.bazel", "README.md", "SECURITY.md", "biome.json", "component.yaml", "flake.lock", "flake.nix", "justfile", "pyproject.toml")
+	addPaths(expected, "", ".bazelignore", ".bazelrc", ".bazelversion", ".editorconfig", ".gitignore", ".golangci.yml", ".markdownlint-cli2.yaml", ".pre-commit-config.yaml", ".yamllint.yaml", "BUILD.bazel", "CONTRIBUTING.md", "LICENSE", "MODULE.bazel", "MODULE.bazel.lock", "README.md", "SECURITY.md", "biome.json", "component.yaml", "flake.lock", "flake.nix", "justfile", "pyproject.toml")
 	addPaths(expected, ".vscode", "extensions.json", "settings.json")
 	addPaths(expected, ".github", "CODEOWNERS", "actionlint.yaml", "dependabot.yml", "pull_request_template.md")
 	addPaths(expected, ".github/workflows", "pull-request.yml", "promotion.yml", "drift-detection.yml", "rollback-verification.yml")
@@ -475,8 +475,8 @@ func ValidateRepositoryWithOptions(root string, options ValidationOptions) error
 	if len(missing) > 0 || len(extra) > 0 {
 		return fmt.Errorf("source tree drift: missing=%v extra=%v", missing, extra)
 	}
-	if len(expected) != 138 {
-		return fmt.Errorf("internal source manifest has %d files, expected 138", len(expected))
+	if len(expected) != 142 {
+		return fmt.Errorf("internal source manifest has %d files, expected 142", len(expected))
 	}
 	if err := validateComponent(root); err != nil {
 		return err
@@ -3298,24 +3298,28 @@ func validateFailClosedSources(root string) error {
 			"DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25",
 			"nix-2.31.2-x86_64-linux.tar.xz",
 			"source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb",
+			"substituters = https://cache.nixos.org/", //nolint:misspell // Exact Nix configuration key.
+			"trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+			"require-sigs = true",
+			"accept-flake-config = false",
+			"--no-accept-flake-config",
 			"--no-update-lock-file",
 		} {
 			if !strings.Contains(text, invariant) {
 				return fmt.Errorf("%s lacks locked Nix bootstrap %q", workflow, invariant)
 			}
 		}
-		for _, forbidden := range []string{"actions/setup-go@", "actions/setup-python@"} {
+		for _, forbidden := range []string{"actions/setup-go@", "actions/setup-python@", "bazel-contrib/setup-bazel@", "USE_BAZEL_VERSION", "--accept-flake-config", "--lockfile_mode=off"} {
 			if strings.Contains(text, forbidden) {
 				return fmt.Errorf("%s bypasses the Nix toolchain with %q", workflow, forbidden)
 			}
 		}
 	}
 	for _, invariant := range []string{
-		"bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86",
-		"nix flake check --no-update-lock-file",
-		"nix develop --no-update-lock-file .#ci --command just validate",
-		"nix develop --no-update-lock-file .#ci --command just bazel-test",
-		`USE_BAZEL_VERSION: "9.2.0"`,
+		"nix flake check --no-accept-flake-config --no-update-lock-file",
+		"nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just validate",
+		"nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just bazel-test",
+		"git ls-files --error-unmatch .bazelignore .bazelrc .bazelversion flake.nix flake.lock MODULE.bazel MODULE.bazel.lock",
 	} {
 		if !strings.Contains(string(pullRequest), invariant) {
 			return fmt.Errorf("pull-request workflow lacks Nix/Bazel validation %q", invariant)
@@ -3325,7 +3329,7 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	for _, invariant := range []string{"aarch64-darwin", "x86_64-linux", "toolchain", "devShells", "default", "ci", "formatter", "checks", "toolchainCheck", "vendorHash"} {
+	for _, invariant := range []string{"aarch64-darwin", "x86_64-linux", "toolchain", "devShells", "default", "ci", "formatter", "checks", "toolchainCheck", "vendorHash", "83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c", "bazel_9", "toolchainManifest"} {
 		if !strings.Contains(string(flake), invariant) {
 			return fmt.Errorf("flake.nix lacks toolchain contract %q", invariant)
 		}
@@ -3334,8 +3338,22 @@ func validateFailClosedSources(root string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(justfile), "USE_BAZEL_VERSION=9.2.0 bazelisk") {
-		return errors.New("just bazel-test lacks a pinned Bazel release")
+	for _, invariant := range []string{
+		"MACOSX_DEPLOYMENT_TARGET",
+		"bazel test --config=ci",
+		`"${bazel_args[@]}" //...`,
+	} {
+		if !strings.Contains(string(justfile), invariant) {
+			return errors.New("just bazel-test does not use the locked Nix-provided Bazel CI configuration")
+		}
+	}
+	if !strings.Contains(string(flake), "BAZEL_LINKOPTS") {
+		return errors.New("the locked Nix Bazel wrapper does not provide platform linker options")
+	}
+	for _, forbidden := range []string{"bazelisk", "USE_BAZEL_VERSION", "--lockfile_mode=off"} {
+		if strings.Contains(string(justfile), forbidden) {
+			return fmt.Errorf("justfile bypasses the locked Bazel policy with %q", forbidden)
+		}
 	}
 	namespace, err := os.ReadFile(filepath.Join(root, "controllers", "argocd", "namespace.yaml"))
 	if err != nil {

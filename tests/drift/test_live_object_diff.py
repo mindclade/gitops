@@ -1,6 +1,8 @@
 # pyright: basic, reportArgumentType=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportOperatorIssue=false, reportOptionalMemberAccess=false, reportOptionalSubscript=false
+import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from datetime import date
@@ -93,7 +95,7 @@ class LiveObjectDiffTest(unittest.TestCase):
             for path in ROOT.rglob("*")
             if path.is_file() and ".git" not in path.parts and ".ruff_cache" not in path.parts
         ]
-        self.assertEqual(len(files), 138)
+        self.assertEqual(len(files), 142)
 
     def test_no_plaintext_secret_or_mutable_release(self):
         for path in ROOT.rglob("*"):
@@ -245,7 +247,10 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIn("\n  required:\n    name: required\n", workflow)
         self.assertIn("push:\n    branches: [main]", workflow)
         self.assertIn("merge_group:\n    types: [checks_requested]", workflow)
-        self.assertIn("nix develop --no-update-lock-file .#ci --command just validate", workflow)
+        self.assertIn(
+            "nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just validate",
+            workflow,
+        )
         self.assertIn("kubeconform -strict", justfile)
         self.assertIn("kustomize build", justfile)
 
@@ -276,8 +281,18 @@ class LiveObjectDiffTest(unittest.TestCase):
                     "source-revision: 3477b9e591f27522d437d78b21cb857ce87dd6bb",
                     source,
                 )
+                self.assertIn("substituters = https://cache.nixos.org/", source)
+                self.assertIn(
+                    "trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+                    source,
+                )
+                self.assertIn("require-sigs = true", source)
+                self.assertIn("accept-flake-config = false", source)
+                self.assertIn("--no-accept-flake-config", source)
+                self.assertNotIn("--accept-flake-config", source)
                 self.assertNotIn("actions/setup-go@", source)
                 self.assertNotIn("actions/setup-python@", source)
+                self.assertNotIn("bazel-contrib/setup-bazel@", source)
 
     def test_flake_exposes_the_cross_platform_toolchain_contract(self):
         flake = (ROOT / "flake.nix").read_text()
@@ -296,19 +311,61 @@ class LiveObjectDiffTest(unittest.TestCase):
         self.assertIn('"nixpkgs"', lock)
         self.assertIn('"narHash"', lock)
 
-    def test_bazelisk_uses_pinned_bazel_release(self):
+    def test_nix_toolchain_uses_pinned_bazel_release(self):
         workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
         justfile = (ROOT / "justfile").read_text()
         readme = (ROOT / "README.md").read_text()
-        self.assertIn('USE_BAZEL_VERSION: "9.2.0"', workflow)
-        self.assertIn(
-            "bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86",
-            workflow,
-        )
-        self.assertIn("USE_BAZEL_VERSION=9.2.0 bazelisk", justfile)
-        self.assertIn("`--lockfile_mode=off`", readme)
+        flake = (ROOT / "flake.nix").read_text()
+        self.assertIn("nix build --no-accept-flake-config", workflow)
+        self.assertIn("BAZEL_LINKOPTS", flake)
+        self.assertIn("MACOSX_DEPLOYMENT_TARGET", justfile)
+        self.assertIn('bazel test --config=ci "${bazel_args[@]}" //...', justfile)
+        self.assertIn("83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c", flake)
+        self.assertIn("bazel_9", flake)
+        self.assertEqual((ROOT / ".bazelversion").read_text().strip(), "9.1.1")
         self.assertIn("`MODULE.bazel.lock`", readme)
-        self.assertFalse((ROOT / ".bazelversion").exists())
+        self.assertTrue((ROOT / "MODULE.bazel.lock").is_file())
+        for source in (workflow, justfile, readme):
+            self.assertNotIn("bazelisk", source.lower())
+            self.assertNotIn("USE_BAZEL_VERSION", source)
+            self.assertNotIn("--lockfile_mode=off", source)
+
+    def test_nix_config_guard_accepts_wrapped_and_scalar_values(self):
+        workflow = (ROOT / ".github/workflows/pull-request.yml").read_text()
+        jq_filter = workflow.split("nix config show --json | jq -e '\n", 1)[1].split(
+            "\n          ' >/dev/null", 1
+        )[0]
+        approved = {
+            "substituters": ["https://cache.nixos.org/"],
+            "trusted-public-keys": [
+                "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+            ],
+            "require-sigs": True,
+            "accept-flake-config": False,
+        }
+        fixtures = (
+            approved,
+            {key: {"value": value, "source": "workflow"} for key, value in approved.items()},
+        )
+        for fixture in fixtures:
+            with self.subTest(shape=type(fixture["substituters"])):
+                result = subprocess.run(
+                    ["jq", "-e", jq_filter],
+                    input=json.dumps(fixture),
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+        rejected = {**approved, "accept-flake-config": True}
+        result = subprocess.run(
+            ["jq", "-e", jq_filter],
+            input=json.dumps(rejected),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        self.assertNotEqual(0, result.returncode)
 
     def test_local_bootstrap_provenance_is_checked_before_remote_render(self):
         justfile = (ROOT / "justfile").read_text()

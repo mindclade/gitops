@@ -7,7 +7,7 @@ resources, contain credentials, or grant CI direct cluster access.
 
 ## Blueprint conformance status
 
-The tracked source matches the 133-file `gitops/` tree in
+The tracked source matches the governed 142-file `gitops/` tree derived from
 `MINDCLADE_MONOREPO_BLUEPRINT_v3.4.3_OPTIMIZED.md` Appendix A3.13 exactly.
 That structural result is not implementation qualification. The A3.13
 production contract is currently **FAIL**: the repository is pre-production,
@@ -128,12 +128,12 @@ Required entry points are read-only with respect to repositories, clusters, and
 cloud accounts:
 
 ```sh
-nix build --no-link --no-update-lock-file .#toolchain
-nix flake check --no-update-lock-file
-nix develop .#ci --command just validate
-nix develop .#ci --command just render development
-nix develop .#ci --command just verify-bootstrap
-nix develop .#ci --command just bazel-test
+nix build --no-accept-flake-config --no-link --no-update-lock-file .#toolchain
+nix flake check --no-accept-flake-config --no-update-lock-file
+nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just validate
+nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just render development
+nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just verify-bootstrap
+nix develop --no-accept-flake-config --no-update-lock-file .#ci --command just bazel-test
 ```
 
 The root developer-quality interface is `just format`, `just format-check`,
@@ -154,15 +154,13 @@ replace them. Lock updates are isolated changes; normal checks always use
 the checksum-pinned Argo overlay, checks Kubernetes schemas, digest-only images,
 Rego, strict JSON Schemas, and the exact source tree. `verify-bootstrap`
 downloads the commit-pinned upstream Argo CD manifest and verifies its declared
-SHA-256. `just bazel-test` selects Bazel 9.2.0 through Bazelisk. Nothing in these
-commands connects to a cluster or promotes a release.
+SHA-256. `just bazel-test` uses Bazel 9.1.1 from the Nix toolchain and enforces
+the committed `MODULE.bazel.lock` without updating it. Nothing in these commands
+connects to a cluster or promotes a release.
 
-The canonical Bazel recipe and CI deliberately pass `--lockfile_mode=off` because
-the current authoritative 138-file blueprint does not include
-`MODULE.bazel.lock`. A direct default Bzlmod command can generate that untracked
-audit byproduct and make exact-tree validation fail. Use `just bazel-test` for
-blueprint-conformant checks; do not interpret the lockfile exception as a claim
-that unpinned Bazel versions are acceptable.
+Remote Bazel execution and remote caching are intentionally disabled. They may
+be enabled only for workers with the exact reviewed Nix store paths or an
+immutable, digest-pinned image built from this toolchain closure.
 
 The canonical bootstrap is checked as Kubernetes 1.34 and the Argo namespace
 pins restricted Pod Security admission enforcement, audit, and warning to

@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+env:
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes
+    accept-flake-config = false
+    substituters = https://cache.nixos.org/
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    require-sigs = true
+
 concurrency:
   group: gitops-source-drift
   cancel-in-progress: true
@@ -18,7 +26,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        shell: nix develop --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
+        shell: nix develop --no-accept-flake-config --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

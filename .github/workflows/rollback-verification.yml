@@ -45,6 +45,14 @@ on:
 permissions:
   contents: read
 
+env:
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes
+    accept-flake-config = false
+    substituters = https://cache.nixos.org/
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    require-sigs = true
+
 concurrency:
   group: rollback-${{ inputs.environment }}
   cancel-in-progress: false
@@ -69,7 +77,7 @@ jobs:
     timeout-minutes: 10
     defaults:
       run:
-        shell: nix develop --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
+        shell: nix develop --no-accept-flake-config --no-update-lock-file .#ci --command bash --noprofile --norc -euo pipefail {0}
     environment:
       name: production-promotion
     env:
